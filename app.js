@@ -1,1205 +1,1520 @@
-import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
+import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm'
 
-const supabase = createClient(
-  'https://xhhmxabftbyxrirvvihn.supabase.co',
-  'sb_publishable_NZHoIxqqpSvVBP8MrLHCYA_gmg1AbN-'
-);
+const SUPABASE_URL = 'https://xhhmxabftbyxrirvvihn.supabase.co'
+const SUPABASE_ANON_KEY = 'sb_publishable_NZHoIxqqpSvVBP8MrLHCYA_gmg1AbN-'
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true,
+    detectSessionInUrl: true
+  }
+})
 
-const T_USERS = 'uNMexs7BYTXQ2_wandermap_app_users';
-const T_LOGS = 'uNMexs7BYTXQ2_wandermap_adventure_logs';
-const T_UPVOTES = 'uNMexs7BYTXQ2_wandermap_log_upvotes';
-const T_COMMENTS = 'uNMexs7BYTXQ2_wandermap_log_comments';
-const T_BUCKET = 'uNMexs7BYTXQ2_wandermap_bucket_list';
-
-const NASA_APOD = 'https://api.nasa.gov/planetary/apod?api_key=DEMO_KEY';
-const REST_COUNTRIES = 'https://restcountries.com/v3.1';
-const OPEN_METEO_GEOCODE = 'https://geocoding-api.open-meteo.com/v1/search';
-const OPEN_METEO_FORECAST = 'https://api.open-meteo.com/v1/forecast';
-const EMAIL_REDIRECT = 'https://sling-gogiapp.web.app/email-confirmed.html';
-
-const TAG_OPTIONS = ['food', 'nightlife', 'culture', 'nature'];
-const WORLD_REGIONS = [
-  { code: 'US', name: 'United States', path: 'M120 160 L220 160 L240 220 L180 250 L110 220 Z' },
-  { code: 'CA', name: 'Canada', path: 'M105 110 L210 95 L255 145 L205 170 L120 160 Z' },
-  { code: 'MX', name: 'Mexico', path: 'M145 250 L200 240 L230 290 L185 320 L145 290 Z' },
-  { code: 'BR', name: 'Brazil', path: 'M300 290 L360 255 L410 310 L385 390 L330 420 L290 360 Z' },
-  { code: 'AR', name: 'Argentina', path: 'M350 430 L390 420 L405 520 L370 575 L335 520 Z' },
-  { code: 'GB', name: 'United Kingdom', path: 'M520 115 L545 110 L550 145 L530 160 L515 140 Z' },
-  { code: 'FR', name: 'France', path: 'M545 175 L585 170 L600 205 L565 225 L535 205 Z' },
-  { code: 'ES', name: 'Spain', path: 'M505 195 L545 190 L555 220 L510 225 L492 205 Z' },
-  { code: 'DE', name: 'Germany', path: 'M580 150 L615 150 L622 185 L592 205 L572 182 Z' },
-  { code: 'IT', name: 'Italy', path: 'M610 205 L640 210 L650 250 L628 270 L610 240 Z' },
-  { code: 'NG', name: 'Nigeria', path: 'M560 320 L600 320 L615 360 L585 385 L555 360 Z' },
-  { code: 'EG', name: 'Egypt', path: 'M640 250 L690 250 L700 300 L655 305 L632 280 Z' },
-  { code: 'ZA', name: 'South Africa', path: 'M610 485 L675 475 L700 530 L645 565 L590 535 Z' },
-  { code: 'IN', name: 'India', path: 'M760 245 L820 240 L840 290 L795 330 L752 295 Z' },
-  { code: 'CN', name: 'China', path: 'M820 185 L930 175 L965 250 L905 295 L820 270 L790 220 Z' },
-  { code: 'JP', name: 'Japan', path: 'M980 205 L1005 220 L995 270 L972 250 Z' },
-  { code: 'AU', name: 'Australia', path: 'M880 455 L980 452 L1010 520 L955 575 L865 555 L845 500 Z' }
-];
-
-let currentUser = null;
-let currentScreen = 'loading';
-let currentView = 'home';
-let currentCity = null;
-let apod = null;
-let selectedSearch = null;
-let citySearchResults = [];
-let logs = [];
-let upvotes = [];
-let comments = [];
-let bucketList = [];
-let currentProfile = null;
-
-const app = document.getElementById('app');
-
-function esc(value) {
-  const div = document.createElement('div');
-  div.textContent = value ?? '';
-  return div.innerHTML;
+const TABLES = {
+  appUsers: 'uNMexs7BYTXQ2_bitemap_app_users',
+  spots: 'uNMexs7BYTXQ2_bitemap_spots',
+  reviews: 'uNMexs7BYTXQ2_bitemap_reviews',
+  follows: 'uNMexs7BYTXQ2_bitemap_follows',
+  crawls: 'uNMexs7BYTXQ2_bitemap_crawls',
+  crawlStops: 'uNMexs7BYTXQ2_bitemap_crawl_stops',
+  crawlClones: 'uNMexs7BYTXQ2_bitemap_crawl_clones',
+  crawlCloneStops: 'uNMexs7BYTXQ2_bitemap_crawl_clone_stops',
+  bucketList: 'uNMexs7BYTXQ2_bitemap_bucket_list',
+  comments: 'uNMexs7BYTXQ2_bitemap_spot_comments',
+  commentLikes: 'uNMexs7BYTXQ2_bitemap_spot_comment_likes',
+  savedAreas: 'uNMexs7BYTXQ2_bitemap_user_saved_areas'
 }
 
-function showToast(message) {
-  const old = document.querySelector('.toast');
-  if (old) old.remove();
-  const toast = document.createElement('div');
-  toast.className = 'toast';
-  toast.textContent = message;
-  document.body.appendChild(toast);
-  setTimeout(() => toast.remove(), 2600);
+const FOOD_TYPES = ['Tacos', 'BBQ', 'Ramen', 'Boba', 'Burgers', 'Falafel', 'Hot Dogs', 'Arepas', 'Noodles', 'Dumplings', 'Pizza', 'Seafood']
+const PRICE_OPTIONS = ['$', '$$', '$$$']
+const RANKS = [
+  { max: 5, name: 'Snacker', icon: 'S' },
+  { max: 20, name: 'Foodie', icon: 'F' },
+  { max: 50, name: 'Connoisseur', icon: 'C' },
+  { max: Infinity, name: 'Street Food Legend', icon: 'L' }
+]
+
+const DEFAULT_CENTER = [34.0522, -118.2437]
+const AUTH_HANG_TIMEOUT_MS = 20000
+const FALLBACK_LOCATION = {
+  latitude: DEFAULT_CENTER[0],
+  longitude: DEFAULT_CENTER[1],
+  city: 'Los Angeles',
+  country: 'United States',
+  countryCode: 'US',
+  flag: 'US'
+}
+
+const state = {
+  session: null,
+  user: null,
+  appUser: null,
+  authMode: 'signin',
+  screen: 'loading',
+  nav: 'home',
+  loadingPhoto: null,
+  geo: null,
+  geoSource: 'unknown',
+  geoError: '',
+  country: null,
+  weather: null,
+  spots: [],
+  reviews: [],
+  crawls: [],
+  crawlStops: [],
+  crawlClones: [],
+  crawlCloneStops: [],
+  follows: [],
+  profiles: [],
+  comments: [],
+  commentLikes: [],
+  savedAreas: [],
+  personalizedFeed: [],
+  currentSpotId: null,
+  currentProfileUserId: null,
+  spinnerResult: null,
+  notice: '',
+  pendingEmail: '',
+  currentReplyParentId: null,
+  initializedRealtime: false,
+  loadingTimeoutId: null,
+  authBusy: false,
+  authListenerSet: false,
+  authTimeoutId: null,
+  authRequestId: 0,
+  authMessage: '',
+  authErrorText: '',
+  authProcessingSession: false,
+  authInitialized: false
+}
+
+const app = document.getElementById('app')
+
+function safeRun(fn, fallbackMessage = 'Something went wrong.') {
+  return async (...args) => {
+    try {
+      return await fn(...args)
+    } catch (error) {
+      console.error('Error:', error?.message, error?.stack)
+      toast(error?.message || fallbackMessage)
+    }
+  }
+}
+
+function toast(message) {
+  state.notice = message
+  render()
+  setTimeout(() => {
+    if (state.notice === message) {
+      state.notice = ''
+      render()
+    }
+  }, 2800)
+}
+
+function escapeHtml(value = '') {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\"/g, '&quot;')
+    .replace(/'/g, '&#039;')
 }
 
 function fmtDate(value) {
-  if (!value) return 'Unknown date';
-  return new Date(value).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  if (!value) return '-'
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return '-'
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
-function timeAgo(value) {
-  if (!value) return 'just now';
-  const diff = Date.now() - new Date(value).getTime();
-  const mins = Math.max(1, Math.floor(diff / 60000));
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.floor(hrs / 24);
-  if (days < 30) return `${days}d ago`;
-  const months = Math.floor(days / 30);
-  return `${months}mo ago`;
+function fmtDateTime(value) {
+  if (!value) return '-'
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return '-'
+  return d.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
 }
 
-function getDisplayName(user = currentUser) {
-  if (!user) return 'Traveler';
-  return user.email?.split('@')[0] || 'Traveler';
+function avg(nums) {
+  const valid = nums.filter(n => typeof n === 'number' && !Number.isNaN(n))
+  return valid.length ? valid.reduce((a, b) => a + b, 0) / valid.length : 0
 }
 
-function clampRating(value) {
-  const n = Number(value || 0);
-  return Math.max(1, Math.min(5, n));
+function distanceKm(aLat, aLon, bLat, bLon) {
+  const toRad = deg => deg * Math.PI / 180
+  const R = 6371
+  const dLat = toRad((bLat || 0) - (aLat || 0))
+  const dLon = toRad((bLon || 0) - (aLon || 0))
+  const lat1 = toRad(aLat || 0)
+  const lat2 = toRad(bLat || 0)
+  const x = Math.sin(dLat / 2) ** 2 + Math.sin(dLon / 2) ** 2 * Math.cos(lat1) * Math.cos(lat2)
+  return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x))
 }
 
-function getRank(totalLogs) {
-  if (totalLogs >= 31) return { name: 'Globetrotter', icon: 'fa-earth-americas', badge: '🌍' };
-  if (totalLogs >= 16) return { name: 'Adventurer', icon: 'fa-mountain-sun', badge: '🏕️' };
-  if (totalLogs >= 6) return { name: 'Explorer', icon: 'fa-compass', badge: '🧭' };
-  return { name: 'Tourist', icon: 'fa-camera-retro', badge: '📸' };
+function walkMinutesBetween(a, b) {
+  const km = distanceKm(a.latitude, a.longitude, b.latitude, b.longitude)
+  return Math.max(3, Math.round(km * 12))
 }
 
-function trendingScore(log) {
-  const ageHours = Math.max(1, (Date.now() - new Date(log.created_at).getTime()) / 36e5);
-  const up = Number(log.upvotes_count || 0);
-  const com = Number(log.comments_count || 0);
-  const rating = Number(log.rating || 0);
-  return Number(((up * 4 + com * 2 + rating * 1.5) / Math.pow(ageHours + 2, 0.32)).toFixed(2));
+function getRank(spotCount) {
+  return RANKS.find(rank => spotCount <= rank.max) || RANKS[RANKS.length - 1]
+}
+
+function profileFor(userId) {
+  return state.profiles.find(p => p.user_id === userId) || null
+}
+
+function currentUserSpotCount(userId) {
+  return state.spots.filter(s => s.user_id === userId).length
+}
+
+function currentUserReviewsCount(userId) {
+  return state.reviews.filter(r => r.user_id === userId).length
+}
+
+function currentUserCompletedCrawls(userId) {
+  return state.crawlClones.filter(c => c.user_id === userId && c.status === 'completed').length
+}
+
+function uniqueFoodTypesTried(userId) {
+  const ownSpotIds = new Set(state.spots.filter(s => s.user_id === userId).map(s => s.id))
+  const reviewedSpotIds = new Set(state.reviews.filter(r => r.user_id === userId).map(r => r.spot_id))
+  const allIds = new Set([...ownSpotIds, ...reviewedSpotIds])
+  const tags = new Set()
+  state.spots.filter(s => allIds.has(s.id)).forEach(s => (s.food_tags || []).forEach(tag => tags.add(tag)))
+  return tags.size
+}
+
+function reviewStatsForSpot(spotId) {
+  const reviews = state.reviews.filter(r => r.spot_id === spotId)
+  const taste = avg(reviews.map(r => Number(r.taste_rating)))
+  const portion = avg(reviews.map(r => Number(r.portion_rating)))
+  const value = avg(reviews.map(r => Number(r.value_rating)))
+  const overall = avg([taste, portion, value])
+  const weighted = reviews.length ? ((overall * 0.7) + Math.min(reviews.length, 10) * 0.12) : 0
+  return { reviews, taste, portion, value, overall, weighted, count: reviews.length }
+}
+
+function commentTreeForSpot(spotId) {
+  const comments = state.comments.filter(c => c.spot_id === spotId)
+  const likesByComment = state.commentLikes.reduce((acc, like) => {
+    acc[like.comment_id] = (acc[like.comment_id] || 0) + 1
+    return acc
+  }, {})
+  const enrich = comment => ({
+    ...comment,
+    likes: likesByComment[comment.id] || 0,
+    profile: profileFor(comment.user_id),
+    replies: comments.filter(reply => reply.parent_comment_id === comment.id).map(reply => ({
+      ...reply,
+      likes: likesByComment[reply.id] || 0,
+      profile: profileFor(reply.user_id)
+    })).sort((a, b) => new Date(a.created_at) - new Date(b.created_at))
+  })
+  return comments
+    .filter(comment => !comment.parent_comment_id)
+    .map(enrich)
+    .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+}
+
+function userUpvotesReceived(userId) {
+  const userSpotIds = new Set(state.spots.filter(s => s.user_id === userId).map(s => s.id))
+  return state.reviews.filter(r => userSpotIds.has(r.spot_id)).length
+}
+
+function buildProfileSummary(userId) {
+  const profile = profileFor(userId)
+  const spotCount = currentUserSpotCount(userId)
+  const reviewCount = currentUserReviewsCount(userId)
+  const completed = currentUserCompletedCrawls(userId)
+  const uniqueTypes = uniqueFoodTypesTried(userId)
+  const followers = state.follows.filter(f => f.following_user_id === userId).length
+  const following = state.follows.filter(f => f.follower_user_id === userId).length
+  const upvotes = userUpvotesReceived(userId)
+  const rank = getRank(spotCount)
+  return { profile, spotCount, reviewCount, completed, uniqueTypes, followers, following, upvotes, rank }
+}
+
+function nearbySpots(limit = 6, tag = '') {
+  const geo = state.geo
+  const spots = [...state.spots].filter(s => s.is_public !== false)
+  const filtered = tag ? spots.filter(s => (s.food_tags || []).includes(tag)) : spots
+  return filtered
+    .map(spot => {
+      const stats = reviewStatsForSpot(spot.id)
+      const distance = geo ? distanceKm(geo.latitude, geo.longitude, Number(spot.latitude), Number(spot.longitude)) : Infinity
+      return { ...spot, distance, stats }
+    })
+    .sort((a, b) => {
+      const scoreA = (a.stats.weighted * 12) - Math.min(a.distance, 50)
+      const scoreB = (b.stats.weighted * 12) - Math.min(b.distance, 50)
+      return scoreB - scoreA
+    })
+    .slice(0, limit)
+}
+
+function highestRatedNearby(limit = 6) {
+  return nearbySpots(limit)
+}
+
+function feedSpotScore(spot) {
+  const stats = reviewStatsForSpot(spot.id)
+  const ageHours = Math.max(1, (Date.now() - new Date(spot.created_at).getTime()) / 36e5)
+  const freshnessBoost = Math.max(0, 24 - ageHours) * 0.08
+  const distance = state.geo ? distanceKm(state.geo.latitude, state.geo.longitude, Number(spot.latitude), Number(spot.longitude)) : 10
+  return stats.weighted * 8 + freshnessBoost - Math.min(distance, 20) * 0.15
+}
+
+async function fetchNASA() {
+  try {
+    const res = await fetch('https://api.nasa.gov/planetary/apod?api_key=DEMO_KEY')
+    const data = await res.json()
+    state.loadingPhoto = data
+  } catch (error) {
+    console.error('NASA error:', error?.message)
+  }
+}
+
+function applyFallbackLocation(reason = 'Using fallback location.') {
+  state.geo = { latitude: FALLBACK_LOCATION.latitude, longitude: FALLBACK_LOCATION.longitude }
+  state.geoSource = 'fallback'
+  state.geoError = reason
+  state.country = {
+    name: FALLBACK_LOCATION.country,
+    code: FALLBACK_LOCATION.countryCode,
+    flag: FALLBACK_LOCATION.flag,
+    currencies: 'United States dollar',
+    languages: 'English',
+    population: 3898747,
+    city: FALLBACK_LOCATION.city
+  }
+}
+
+async function detectLocation(forcePrompt = false) {
+  return new Promise(resolve => {
+    try {
+      if (!navigator.geolocation) {
+        state.geoError = 'This browser does not support location.'
+        resolve(null)
+        return
+      }
+
+      const requestPosition = () => {
+        navigator.geolocation.getCurrentPosition(
+          pos => {
+            state.geoError = ''
+            resolve({ latitude: pos.coords.latitude, longitude: pos.coords.longitude })
+          },
+          error => {
+            console.warn('Geolocation error:', error?.message)
+            state.geoError = error?.message || 'Unable to get your location.'
+            resolve(null)
+          },
+          {
+            enableHighAccuracy: false,
+            timeout: forcePrompt ? 10000 : 6000,
+            maximumAge: forcePrompt ? 0 : 600000
+          }
+        )
+      }
+
+      if (navigator.permissions?.query) {
+        navigator.permissions.query({ name: 'geolocation' })
+          .then(result => {
+            if (result.state === 'granted' || result.state === 'prompt' || forcePrompt) {
+              requestPosition()
+              return
+            }
+            state.geoError = 'Location permission is blocked.'
+            resolve(null)
+          })
+          .catch(() => requestPosition())
+        return
+      }
+
+      requestPosition()
+    } catch (error) {
+      console.error('detectLocation error:', error?.message)
+      state.geoError = error?.message || 'Unable to get your location.'
+      resolve(null)
+    }
+  })
+}
+
+async function fetchCountryAndWeather() {
+  if (!state.geo) {
+    applyFallbackLocation('Location unavailable. Showing Los Angeles fallback.')
+  }
+  try {
+    const reverse = await fetch(`https://geocoding-api.open-meteo.com/v1/reverse?latitude=${state.geo.latitude}&longitude=${state.geo.longitude}&language=en&format=json`)
+    const reverseData = await reverse.json()
+    const place = reverseData?.results?.[0]
+    const countryCode = place?.country_code || state.country?.code || FALLBACK_LOCATION.countryCode
+    const city = place?.name || place?.admin1 || state.country?.city || FALLBACK_LOCATION.city
+
+    const weatherRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${state.geo.latitude}&longitude=${state.geo.longitude}&current=temperature_2m,weather_code,apparent_temperature&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=auto`)
+    const weatherData = await weatherRes.json()
+
+    let country = null
+    if (countryCode) {
+      const countryRes = await fetch(`https://restcountries.com/v3.1/alpha/${countryCode}`)
+      const countryData = await countryRes.json()
+      country = Array.isArray(countryData) ? countryData[0] : null
+    }
+
+    state.country = country ? {
+      name: country.name?.common || place?.country || state.country?.name || FALLBACK_LOCATION.country,
+      code: country.cca2 || countryCode,
+      flag: country.flag || state.country?.flag || FALLBACK_LOCATION.flag,
+      currencies: Object.values(country.currencies || {}).map(c => c.name).join(', '),
+      languages: Object.values(country.languages || {}).join(', '),
+      population: country.population || 0,
+      city
+    } : {
+      name: place?.country || state.country?.name || FALLBACK_LOCATION.country,
+      code: countryCode,
+      flag: state.country?.flag || FALLBACK_LOCATION.flag,
+      currencies: state.country?.currencies || '-',
+      languages: state.country?.languages || '-',
+      population: state.country?.population || 0,
+      city
+    }
+
+    state.weather = weatherData
+  } catch (error) {
+    console.error('Weather/country error:', error?.message)
+    if (!state.country) applyFallbackLocation('Location services unavailable. Showing Los Angeles fallback.')
+  }
+}
+
+function weatherSuggestion() {
+  const code = state.weather?.current?.weather_code
+  if (code == null) return 'Perfect time to scout your next street food stop.'
+  if ([51,53,55,61,63,65,80,81,82].includes(code)) return 'Rainy day - perfect for a hot ramen spot nearby.'
+  if ([0,1].includes(code)) return 'Clear skies - ideal for a sunny taco crawl.'
+  if ([2,3,45,48].includes(code)) return 'Cloudy vibes - maybe grab BBQ and keep exploring.'
+  return 'Weather looks interesting - spin for your next bite.'
+}
+
+function normalizeAuthMessage(message = '') {
+  const text = String(message || '')
+  if (/invalid login credentials/i.test(text)) return 'Incorrect email or password.'
+  if (/email not confirmed/i.test(text)) return 'Please check your email and click the confirmation link first.'
+  if (/user already registered|already been registered/i.test(text)) return 'An account with this email already exists. Try signing in instead.'
+  if (/email rate limit exceeded/i.test(text)) return 'Too many attempts. Please wait a moment and try again.'
+  if (/network/i.test(text)) return 'Network issue while contacting Supabase. Please try again.'
+  return text || 'Authentication failed.'
+}
+
+function isMissingAppUserError(error) {
+  const message = String(error?.message || '')
+  return /no rows returned|json object requested, multiple \(or no\) rows returned|pgrst116/i.test(message)
+}
+
+function setAuthError(message = '') {
+  state.authErrorText = message
+  const errorEl = document.getElementById('auth-error')
+  if (errorEl) errorEl.textContent = message
+}
+
+function beginAuthWork(message = 'Working...') {
+  state.authRequestId += 1
+  const requestId = state.authRequestId
+  state.authBusy = true
+  state.authMessage = message
+  if (state.authTimeoutId) clearTimeout(state.authTimeoutId)
+  state.authTimeoutId = setTimeout(() => {
+    if (state.authBusy && state.authRequestId === requestId) {
+      state.authBusy = false
+      state.authMessage = ''
+      state.authProcessingSession = false
+      setAuthError('Sign-in is taking too long. Please try again.')
+      render()
+    }
+  }, AUTH_HANG_TIMEOUT_MS)
+  return requestId
+}
+
+function finishAuthWork(requestId) {
+  if (requestId !== state.authRequestId) return
+  if (state.authTimeoutId) {
+    clearTimeout(state.authTimeoutId)
+    state.authTimeoutId = null
+  }
+  state.authBusy = false
+  state.authMessage = ''
 }
 
 async function ensureAppUser(user) {
-  try {
-    const { data, error } = await supabase.from(T_USERS).select('*').eq('user_id', user.id).limit(1);
-    if (error) throw error;
-    if (!data || data.length === 0) {
-      await supabase.from(T_USERS).insert({
-        email: user.email,
-        display_name: user.email.split('@')[0],
-        avatar_emoji: '🧭',
-        home_city: ''
-      });
-    }
-    const { data: fresh } = await supabase.from(T_USERS).select('*').eq('user_id', user.id).limit(1);
-    currentProfile = fresh?.[0] || null;
-  } catch (e) {
-    console.error('ensureAppUser', e);
+  if (!user?.id) return null
+
+  const { data: existing, error: existingError } = await supabase
+    .from(TABLES.appUsers)
+    .select('*')
+    .eq('user_id', user.id)
+    .maybeSingle()
+
+  if (existingError && !isMissingAppUserError(existingError)) throw existingError
+
+  if (existing) {
+    state.appUser = existing
+    return existing
   }
+
+  const payload = {
+    user_id: user.id,
+    email: user.email,
+    display_name: user.email?.split('@')[0] || 'Food Scout',
+    avatar_emoji: 'T'
+  }
+
+  const { data, error } = await supabase
+    .from(TABLES.appUsers)
+    .insert(payload)
+    .select()
+    .single()
+
+  if (error) {
+    const { data: retryExisting, error: retryError } = await supabase
+      .from(TABLES.appUsers)
+      .select('*')
+      .eq('user_id', user.id)
+      .maybeSingle()
+
+    if (retryError && !isMissingAppUserError(retryError)) throw retryError
+    if (retryExisting) {
+      state.appUser = retryExisting
+      return retryExisting
+    }
+
+    if (/row-level security|permission denied|violates row-level security policy/i.test(String(error.message || ''))) {
+      state.appUser = {
+        user_id: user.id,
+        email: user.email,
+        display_name: user.email?.split('@')[0] || 'Food Scout',
+        avatar_emoji: 'T'
+      }
+      return state.appUser
+    }
+
+    throw error
+  }
+
+  state.appUser = data
+  return data
 }
 
-async function fetchApod() {
-  try {
-    const res = await fetch(NASA_APOD);
-    const data = await res.json();
-    apod = data;
-  } catch (e) {
-    console.error('apod', e);
-    apod = null;
+async function loadData() {
+  const [spotsRes, reviewsRes, followsRes, crawlsRes, crawlStopsRes, crawlClonesRes, crawlCloneStopsRes, profilesRes, commentsRes, commentLikesRes, savedAreasRes] = await Promise.all([
+    supabase.from(TABLES.spots).select('*').order('created_at', { ascending: false }),
+    supabase.from(TABLES.reviews).select('*').order('created_at', { ascending: false }),
+    supabase.from(TABLES.follows).select('*'),
+    supabase.from(TABLES.crawls).select('*').order('created_at', { ascending: false }),
+    supabase.from(TABLES.crawlStops).select('*').order('stop_order', { ascending: true }),
+    supabase.from(TABLES.crawlClones).select('*').order('created_at', { ascending: false }),
+    supabase.from(TABLES.crawlCloneStops).select('*').order('stop_order', { ascending: true }),
+    supabase.from(TABLES.appUsers).select('*'),
+    supabase.from(TABLES.comments).select('*').order('created_at', { ascending: false }),
+    supabase.from(TABLES.commentLikes).select('*'),
+    supabase.from(TABLES.savedAreas).select('*').order('created_at', { ascending: false })
+  ])
+
+  state.spots = spotsRes.data || []
+  state.reviews = reviewsRes.data || []
+  state.follows = followsRes.data || []
+  state.crawls = crawlsRes.data || []
+  state.crawlStops = crawlStopsRes.data || []
+  state.crawlClones = crawlClonesRes.data || []
+  state.crawlCloneStops = crawlCloneStopsRes.data || []
+  state.profiles = profilesRes.data || []
+  state.comments = commentsRes.data || []
+  state.commentLikes = commentLikesRes.data || []
+  state.savedAreas = savedAreasRes.data || []
+  buildPersonalizedFeed()
+}
+
+function buildPersonalizedFeed() {
+  if (!state.user?.id) {
+    state.personalizedFeed = []
+    return
   }
+  const following = new Set(state.follows.filter(f => f.follower_user_id === state.user.id).map(f => f.following_user_id))
+  const feedItems = []
+  state.spots.forEach(spot => {
+    if (following.has(spot.user_id)) feedItems.push({ type: 'spot', created_at: spot.created_at, item: spot, score: feedSpotScore(spot) })
+  })
+  state.reviews.forEach(review => {
+    if (following.has(review.user_id)) {
+      const spot = state.spots.find(s => s.id === review.spot_id)
+      const recency = Math.max(0, 48 - ((Date.now() - new Date(review.created_at).getTime()) / 36e5)) * 0.05
+      const score = avg([review.taste_rating, review.portion_rating, review.value_rating]) + recency + (spot ? feedSpotScore(spot) * 0.2 : 0)
+      feedItems.push({ type: 'review', created_at: review.created_at, item: review, score })
+    }
+  })
+  state.personalizedFeed = feedItems.sort((a, b) => b.score - a.score || new Date(b.created_at) - new Date(a.created_at)).slice(0, 20)
+}
+
+function setNav(nav) {
+  state.nav = nav
+  render()
+}
+
+function openSpot(id) {
+  state.currentSpotId = id
+  state.nav = 'spot'
+  render()
+}
+
+function openProfile(userId) {
+  state.currentProfileUserId = userId
+  state.nav = 'profile'
+  render()
+}
+
+function renderAuth() {
+  return `
+    <div class="auth-wrap">
+      <div class="auth-card card stamp-card">
+        <div class="brand-mark"><i class="fa-solid fa-compass"></i></div>
+        <h1 class="title">WanderMap</h1>
+        <p class="subtitle">Collect street food finds, save areas, and build crawls with your account.</p>
+        <form id="auth-form" class="form-stack" style="margin-top:20px;">
+          <div>
+            <label class="label">Email</label>
+            <input class="input" type="email" name="email" required ${state.authBusy ? 'disabled' : ''}>
+          </div>
+          <div>
+            <label class="label">Password</label>
+            <input class="input" type="password" name="password" required minlength="6" ${state.authBusy ? 'disabled' : ''}>
+          </div>
+          <div id="auth-error" class="auth-error">${escapeHtml(state.authErrorText || '')}</div>
+          <button class="btn btn-primary" type="submit" ${state.authBusy ? 'disabled' : ''}>${state.authBusy ? (state.authMessage || 'Working...') : state.authMode === 'signup' ? 'Create account' : 'Sign in'}</button>
+        </form>
+        <button class="auth-switch" id="switch-auth">${state.authMode === 'signup' ? 'Already have an account? <strong>Sign in</strong>' : `Don't have an account? <strong>Sign up</strong>`}</button>
+      </div>
+    </div>
+  `
+}
+
+function renderCheckEmail() {
+  return `
+    <div class="auth-wrap">
+      <div class="auth-card card stamp-card">
+        <div class="brand-mark"><i class="fa-regular fa-envelope"></i></div>
+        <h1 class="title" style="font-size:1.9rem;">Check your email</h1>
+        <p class="subtitle">We sent a confirmation link to <strong>${escapeHtml(state.pendingEmail || '')}</strong>. Tap it, then come back and sign in.</p>
+        <button class="btn btn-primary" id="go-signin" style="margin-top:20px;">Go to sign in</button>
+      </div>
+    </div>
+  `
 }
 
 function renderLoading() {
-  const bg = apod?.media_type === 'image' ? `style="background-image:url('${apod.url}')"` : '';
-  app.innerHTML = `
+  const image = state.loadingPhoto?.url || ''
+  return `
     <div class="loading-screen">
       <div class="loading-card card stamp-card">
-        <div class="loading-media" ${bg}>
+        <div class="loading-media" style="background-image:url('${escapeHtml(image)}')">
           <div class="loading-overlay"></div>
         </div>
         <div class="loading-copy">
           <div class="kicker">Daily space dispatch</div>
           <h1 class="title" style="text-align:left; font-size:2rem; margin-top:10px;">WanderMap</h1>
-          <p class="subtitle" style="text-align:left; margin-top:10px;">
-            ${esc(apod?.title || 'Loading today\'s cosmic postcard...')}<br>
-            Plan your next city story while today\'s NASA APOD sets the mood.
-          </p>
+          <p class="subtitle" style="text-align:left; margin-top:10px;">Loading your location, weather, and saved street food world.</p>
         </div>
       </div>
     </div>
-  `;
+  `
 }
 
-function renderSignUp() {
-  currentScreen = 'signup';
-  app.innerHTML = `
-    <div class="auth-wrap">
-      <div class="auth-card card stamp-card">
-        <div class="brand-mark"><i class="fa-solid fa-compass"></i></div>
-        <h1 class="title">WanderMap</h1>
-        <p class="subtitle">Collect city stories, discover top adventures, and build your passport rank.</p>
-        <div class="form-stack" style="margin-top:20px;">
-          <div>
-            <label class="label">Email</label>
-            <input class="input" id="su-email" type="email" placeholder="you@example.com">
-          </div>
-          <div>
-            <label class="label">Password</label>
-            <input class="input" id="su-pass" type="password" placeholder="Minimum 6 characters">
-          </div>
-          <div class="auth-error" id="su-error"></div>
-          <button class="btn btn-primary" id="su-btn">Create account</button>
-          <button class="auth-switch" id="goto-si">Already have an account? <strong>Sign in</strong></button>
-        </div>
-      </div>
-    </div>
-  `;
-
-  document.getElementById('goto-si').addEventListener('click', renderSignIn);
-  document.getElementById('su-btn').addEventListener('click', handleSignUp);
-}
-
-async function handleSignUp() {
-  try {
-    const email = document.getElementById('su-email').value.trim();
-    const password = document.getElementById('su-pass').value;
-    const err = document.getElementById('su-error');
-    err.textContent = '';
-    if (!email) return err.textContent = 'Enter your email.';
-    if (password.length < 6) return err.textContent = 'Password must be at least 6 characters.';
-    const btn = document.getElementById('su-btn');
-    btn.disabled = true;
-    btn.textContent = 'Creating...';
-
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: { emailRedirectTo: EMAIL_REDIRECT }
-    });
-
-    if (error) {
-      if (error.message.includes('already') || error.message.includes('registered')) {
-        const { data: signInData, error: signInErr } = await supabase.auth.signInWithPassword({ email, password });
-        if (signInErr) {
-          err.textContent = 'This email already exists and that password did not match.';
-          btn.disabled = false;
-          btn.textContent = 'Create account';
-          return;
-        }
-        currentUser = signInData.user;
-        await ensureAppUser(currentUser);
-        await loadAppData();
-        renderAppShell();
-        return;
-      }
-      throw error;
-    }
-
-    renderCheckEmail(email);
-  } catch (e) {
-    document.getElementById('su-error').textContent = e.message || 'Could not create account.';
-    const btn = document.getElementById('su-btn');
-    if (btn) {
-      btn.disabled = false;
-      btn.textContent = 'Create account';
-    }
-  }
-}
-
-function renderCheckEmail(email) {
-  currentScreen = 'check-email';
-  app.innerHTML = `
-    <div class="auth-wrap">
-      <div class="auth-card card stamp-card">
-        <div class="brand-mark"><i class="fa-regular fa-envelope"></i></div>
-        <h1 class="title" style="font-size:1.9rem;">Check your email</h1>
-        <p class="subtitle">We sent a confirmation link to <strong>${esc(email)}</strong>. Tap it, then come back and sign in to start exploring.</p>
-        <div style="margin-top:20px; display:grid; gap:12px;">
-          <button class="btn btn-primary" id="goto-signin-email">Go to sign in</button>
-        </div>
-      </div>
-    </div>
-  `;
-  document.getElementById('goto-signin-email').addEventListener('click', renderSignIn);
-}
-
-function renderSignIn() {
-  currentScreen = 'signin';
-  app.innerHTML = `
-    <div class="auth-wrap">
-      <div class="auth-card card stamp-card">
-        <div class="brand-mark"><i class="fa-solid fa-map-location-dot"></i></div>
-        <h1 class="title">Welcome back</h1>
-        <p class="subtitle">Sign in to your travel journal and discovery feed.</p>
-        <div class="form-stack" style="margin-top:20px;">
-          <div>
-            <label class="label">Email</label>
-            <input class="input" id="si-email" type="email" placeholder="you@example.com">
-          </div>
-          <div>
-            <label class="label">Password</label>
-            <input class="input" id="si-pass" type="password" placeholder="Your password">
-          </div>
-          <div class="auth-error" id="si-error"></div>
-          <button class="btn btn-primary" id="si-btn">Sign in</button>
-          <button class="auth-switch" id="goto-su">Need an account? <strong>Sign up</strong></button>
-        </div>
-      </div>
-    </div>
-  `;
-
-  document.getElementById('goto-su').addEventListener('click', renderSignUp);
-  document.getElementById('si-btn').addEventListener('click', handleSignIn);
-}
-
-async function handleSignIn() {
-  try {
-    const email = document.getElementById('si-email').value.trim();
-    const password = document.getElementById('si-pass').value;
-    const err = document.getElementById('si-error');
-    err.textContent = '';
-    if (!email || !password) return err.textContent = 'Fill in both fields.';
-    const btn = document.getElementById('si-btn');
-    btn.disabled = true;
-    btn.textContent = 'Signing in...';
-
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) {
-      if (error.message.includes('Email not confirmed') || error.message.includes('not confirmed')) {
-        err.textContent = 'Please confirm your email first.';
-      } else {
-        err.textContent = error.message;
-      }
-      btn.disabled = false;
-      btn.textContent = 'Sign in';
-      return;
-    }
-
-    currentUser = data.user;
-    await ensureAppUser(currentUser);
-    await loadAppData();
-    renderAppShell();
-  } catch (e) {
-    const err = document.getElementById('si-error');
-    if (err) err.textContent = e.message || 'Could not sign in.';
-    const btn = document.getElementById('si-btn');
-    if (btn) {
-      btn.disabled = false;
-      btn.textContent = 'Sign in';
-    }
-  }
-}
-
-async function loadAppData() {
-  try {
-    const [logsRes, upvotesRes, commentsRes, bucketRes, profileRes] = await Promise.all([
-      supabase.from(T_LOGS).select('*').order('created_at', { ascending: false }),
-      supabase.from(T_UPVOTES).select('*'),
-      supabase.from(T_COMMENTS).select('*').order('created_at', { ascending: false }),
-      currentUser ? supabase.from(T_BUCKET).select('*').eq('user_id', currentUser.id).order('created_at', { ascending: false }) : Promise.resolve({ data: [] }),
-      currentUser ? supabase.from(T_USERS).select('*').eq('user_id', currentUser.id).limit(1) : Promise.resolve({ data: [] })
-    ]);
-
-    logs = (logsRes.data || []).map(log => ({ ...log, trending_score: trendingScore(log) }))
-      .sort((a, b) => b.trending_score - a.trending_score);
-    upvotes = upvotesRes.data || [];
-    comments = commentsRes.data || [];
-    bucketList = bucketRes.data || [];
-    currentProfile = profileRes.data?.[0] || currentProfile;
-  } catch (e) {
-    console.error('loadAppData', e);
-  }
-}
-
-function renderAppShell() {
-  currentScreen = 'app';
-  app.innerHTML = `
-    <header class="topbar">
+function renderTopbar() {
+  const userId = state.user?.id || state.currentProfileUserId || null
+  const rank = userId ? getRank(currentUserSpotCount(userId)) : getRank(0)
+  return `
+    <div class="topbar">
       <div class="topbar-inner">
         <div class="brand">
-          <div class="brand-icon"><i class="fa-solid fa-compass-drafting"></i></div>
+          <div class="brand-icon"><i class="fa-solid fa-map-location-dot"></i></div>
           <div>
             <h1>WanderMap</h1>
-            <p>Adventure logs, city weather, and traveler ranks</p>
+            <p>${escapeHtml(weatherSuggestion())}</p>
           </div>
         </div>
         <div class="top-actions">
-          <button class="btn btn-ghost" id="quick-city-btn"><i class="fa-solid fa-city"></i> Pick city</button>
-          <button class="btn btn-secondary" id="signout-btn"><i class="fa-solid fa-right-from-bracket"></i> Sign out</button>
+          <span class="meta-chip">${rank.icon} ${rank.name}</span>
+          <button class="btn btn-secondary" id="refresh-location">Refresh location</button>
+          <button class="btn btn-ghost" id="sign-out">Sign out</button>
         </div>
       </div>
       <div class="nav-tabs">
-        <button class="nav-tab ${currentView === 'home' ? 'active' : ''}" data-view="home">Discovery</button>
-        <button class="nav-tab ${currentView === 'city' ? 'active' : ''}" data-view="city">City page</button>
-        <button class="nav-tab ${currentView === 'create' ? 'active' : ''}" data-view="create">New log</button>
-        <button class="nav-tab ${currentView === 'profile' ? 'active' : ''}" data-view="profile">Profile</button>
-        <button class="nav-tab ${currentView === 'stats' ? 'active' : ''}" data-view="stats">Global stats</button>
+        ${['home','map','add','crawls','bucket','profile'].map(tab => `<button class="nav-tab ${state.nav === tab ? 'active' : ''}" data-nav="${tab}">${tab === 'add' ? 'Add Spot' : tab.charAt(0).toUpperCase() + tab.slice(1)}</button>`).join('')}
       </div>
-    </header>
-    <main class="page-shell" id="page-shell"></main>
-  `;
-
-  document.getElementById('signout-btn').addEventListener('click', async () => {
-    await supabase.auth.signOut();
-    currentUser = null;
-    currentProfile = null;
-    renderSignIn();
-  });
-
-  document.getElementById('quick-city-btn').addEventListener('click', () => openCityPickerModal());
-
-  document.querySelectorAll('.nav-tab').forEach(btn => {
-    btn.addEventListener('click', () => {
-      currentView = btn.dataset.view;
-      renderAppShell();
-    });
-  });
-
-  renderCurrentView();
+    </div>
+  `
 }
 
-function renderCurrentView() {
-  const shell = document.getElementById('page-shell');
-  if (!shell) return;
-  if (currentView === 'home') return renderHome(shell);
-  if (currentView === 'city') return renderCityPage(shell);
-  if (currentView === 'create') return renderCreateLog(shell);
-  if (currentView === 'profile') return renderProfile(shell);
-  if (currentView === 'stats') return renderStats(shell);
-}
-
-function getPublicLogs() {
-  return logs.filter(log => log.is_public !== false);
-}
-
-function getLogComments(logId) {
-  return comments.filter(c => c.log_id === logId);
-}
-
-function hasUpvoted(logId) {
-  return upvotes.some(v => v.log_id === logId && v.user_id === currentUser?.id);
-}
-
-function renderStars(rating) {
-  return '★'.repeat(clampRating(rating)) + '☆'.repeat(5 - clampRating(rating));
-}
-
-function renderLogCard(log, compact = false) {
-  const commentCount = getLogComments(log.id).length;
-  const author = log.user_id === currentUser?.id ? (currentProfile?.display_name || getDisplayName()) : 'Traveler';
+function renderSpotCard(spot) {
+  const stats = reviewStatsForSpot(spot.id)
+  const owner = profileFor(spot.user_id)
+  const distance = state.geo ? distanceKm(state.geo.latitude, state.geo.longitude, Number(spot.latitude), Number(spot.longitude)) : null
   return `
-    <article class="log-card card stamp-card">
+    <div class="card log-card stamp-card">
       <div class="log-head">
         <div>
-          <h3 style="font-size:${compact ? '1.05rem' : '1.25rem'};">${esc(log.title)}</h3>
-          <div class="log-city"><i class="fa-solid fa-location-dot"></i> ${esc(log.city_name)}, ${esc(log.country_name || '')}</div>
+          <div class="kicker">${spot.country_flag || ''} ${escapeHtml(spot.country_name || 'Local')}</div>
+          <h3 style="margin-top:8px;">${escapeHtml(spot.name)}</h3>
+          <div class="log-city">by ${escapeHtml(owner?.display_name || 'Food scout')} � ${fmtDateTime(spot.created_at)}</div>
         </div>
-        <div style="text-align:right;">
-          <div style="color:var(--gold); font-weight:800;">${esc(renderStars(log.rating))}</div>
-          <div class="small">Visited ${esc(fmtDate(log.visit_date))}</div>
-        </div>
+        <div class="meta-chip">${stats.count ? stats.overall.toFixed(1) + ' star' : 'New'}</div>
       </div>
-      <p class="log-notes">${esc(log.notes)}</p>
-      <div class="tag-row">${(log.tags || []).map(tag => `<span class="tag">#${esc(tag)}</span>`).join('')}</div>
+      <p class="log-notes">${escapeHtml(spot.description || '')}</p>
+      <div class="tag-row">${(spot.food_tags || []).map(tag => `<span class="tag">${escapeHtml(tag)}</span>`).join('')} <span class="meta-chip">${escapeHtml(spot.price_range)}</span> ${distance != null ? `<span class="meta-chip">${distance.toFixed(1)} km</span>` : ''}</div>
       <div class="meta-row">
-        <span class="meta-chip"><i class="fa-solid fa-fire"></i> Trending ${log.trending_score}</span>
-        <span class="meta-chip"><i class="fa-solid fa-thumbs-up"></i> ${log.upvotes_count || 0} upvotes</span>
-        <span class="meta-chip"><i class="fa-solid fa-comments"></i> ${commentCount} comments</span>
-        <span class="meta-chip"><i class="fa-regular fa-clock"></i> ${timeAgo(log.created_at)}</span>
-        <span class="meta-chip"><i class="fa-solid fa-passport"></i> ${esc(author)}</span>
+        <button class="btn btn-secondary open-spot" data-spot-id="${spot.id}">Open spot</button>
+        <button class="btn btn-ghost open-profile" data-user-id="${spot.user_id}">Profile</button>
       </div>
-      <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:16px;">
-        <button class="btn btn-primary upvote-btn" data-log="${log.id}">${hasUpvoted(log.id) ? 'Upvoted' : 'Upvote'}</button>
-        <button class="btn btn-secondary comment-btn" data-log="${log.id}">Comment</button>
-        <button class="btn btn-ghost city-link-btn" data-city="${esc(log.city_name)}" data-country="${esc(log.country_name || '')}">Open city</button>
-      </div>
-      <div class="comment-list">${getLogComments(log.id).slice(0, 3).map(c => `<div class="comment-item"><strong>${c.user_id === currentUser?.id ? 'You' : 'Traveler'}:</strong> ${esc(c.comment_text)}</div>`).join('')}</div>
-    </article>
-  `;
+    </div>
+  `
 }
 
-function bindLogActions(root = document) {
-  root.querySelectorAll('.upvote-btn').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      const logId = btn.dataset.log;
-      if (hasUpvoted(logId)) return showToast('You already upvoted this log.');
-      try {
-        const log = logs.find(l => l.id === logId);
-        if (!log) return;
-        const { error } = await supabase.from(T_UPVOTES).insert({ log_id: logId, log_owner_id: log.user_id });
-        if (error) throw error;
-        await supabase.from(T_LOGS).update({
-          upvotes_count: (log.upvotes_count || 0) + 1,
-          trending_score: trendingScore({ ...log, upvotes_count: (log.upvotes_count || 0) + 1 })
-        }).eq('id', logId);
-        await loadAppData();
-        renderAppShell();
-        showToast('Adventure log upvoted.');
-      } catch (e) {
-        console.error('upvote', e);
-        showToast('Could not upvote right now.');
-      }
-    });
-  });
-
-  root.querySelectorAll('.comment-btn').forEach(btn => {
-    btn.addEventListener('click', () => openCommentModal(btn.dataset.log));
-  });
-
-  root.querySelectorAll('.city-link-btn').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      await selectCityByName(btn.dataset.city, btn.dataset.country);
-    });
-  });
-}
-
-function renderHome(container) {
-  const publicLogs = getPublicLogs();
-  const topLogs = publicLogs.slice(0, 6);
-  const topCities = [...publicLogs.reduce((map, log) => {
-    const key = `${log.city_name}|${log.country_name}`;
-    if (!map.has(key)) map.set(key, { city: log.city_name, country: log.country_name, count: 0 });
-    map.get(key).count += 1;
-    return map;
-  }, new Map()).values()].sort((a, b) => b.count - a.count).slice(0, 5);
-
-  container.innerHTML = `
-    <section class="hero">
-      <div class="hero-grid">
-        <div class="hero-main card stamp-card">
-          <div class="kicker">Discovery feed</div>
-          <h2 class="hero-title">Find the world\'s most loved city adventures.</h2>
-          <p class="hero-copy">WanderMap blends live weather, country facts, and community travel journals into one discovery feed. Browse trending logs, jump into a city page, and start building your own passport rank.</p>
-          <div class="hero-actions">
-            <button class="btn btn-primary" id="hero-create-btn">Write a log</button>
-            <button class="btn btn-secondary" id="hero-pick-btn">Choose a city</button>
-          </div>
-          <div class="mini-stats">
-            <div class="stat-pill"><strong>${publicLogs.length}</strong><span>Public logs</span></div>
-            <div class="stat-pill"><strong>${new Set(publicLogs.map(l => l.city_name)).size}</strong><span>Cities explored</span></div>
-            <div class="stat-pill"><strong>${upvotes.length}</strong><span>Total upvotes</span></div>
-          </div>
-        </div>
-        <aside class="hero-side card stamp-card">
-          <div class="section-title" style="margin-bottom:10px;">
-            <h2 style="font-size:1.3rem;">Top cities</h2>
-          </div>
-          <div class="log-list">
-            ${topCities.length ? topCities.map((item, idx) => `
-              <div class="city-result top-city-item" data-city="${esc(item.city)}" data-country="${esc(item.country)}">
-                <strong>${idx + 1}. ${esc(item.city)}</strong>
-                <div class="small">${esc(item.country)} · ${item.count} logs</div>
-              </div>
-            `).join('') : '<div class="empty">No cities logged yet.</div>'}
-          </div>
-        </aside>
-      </div>
-    </section>
-
-    <section class="section">
-      <div class="section-title">
-        <div>
-          <h2>Trending now</h2>
-          <p>The home feed ranks logs by upvotes, comments, rating, and freshness.</p>
-        </div>
-      </div>
-      <div class="grid feed-grid">
-        <div class="log-list" id="home-log-list">
-          ${topLogs.length ? topLogs.map(log => renderLogCard(log)).join('') : '<div class="card empty">No public logs yet. Be the first to add one.</div>'}
-        </div>
-        <div class="side-stack">
-          <div class="city-search-card card stamp-card">
-            <div class="section-title" style="margin-bottom:10px;"><h2 style="font-size:1.3rem;">Search cities</h2></div>
-            <div class="city-search-row">
-              <input class="input" id="home-city-input" placeholder="Search a city like Lisbon or Kyoto">
-              <button class="btn btn-primary" id="home-city-search">Search</button>
-            </div>
-            <div class="city-results" id="home-city-results"></div>
-          </div>
-          <div class="stats-card card stamp-card">
-            <div class="section-title" style="margin-bottom:10px;"><h2 style="font-size:1.3rem;">Passport ranks</h2></div>
-            <div class="log-list">
-              <div class="meta-chip">📸 Tourist · 0–5 logs</div>
-              <div class="meta-chip">🧭 Explorer · 6–15 logs</div>
-              <div class="meta-chip">🏕️ Adventurer · 16–30 logs</div>
-              <div class="meta-chip">🌍 Globetrotter · 31+ logs</div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </section>
-    <div class="footer-space"></div>
-  `;
-
-  document.getElementById('hero-create-btn').addEventListener('click', () => {
-    currentView = 'create';
-    renderAppShell();
-  });
-  document.getElementById('hero-pick-btn').addEventListener('click', () => openCityPickerModal());
-  document.getElementById('home-city-search').addEventListener('click', async () => {
-    const q = document.getElementById('home-city-input').value.trim();
-    await searchCities(q, document.getElementById('home-city-results'));
-  });
-
-  container.querySelectorAll('.top-city-item').forEach(el => {
-    el.addEventListener('click', async () => {
-      await selectCityByName(el.dataset.city, el.dataset.country);
-    });
-  });
-
-  bindLogActions(container);
-}
-
-async function searchCities(query, resultsEl) {
-  try {
-    if (!query) {
-      resultsEl.innerHTML = '<div class="empty">Enter a city to search.</div>';
-      return;
-    }
-    resultsEl.innerHTML = '<div class="empty">Searching cities...</div>';
-    const res = await fetch(`${OPEN_METEO_GEOCODE}?name=${encodeURIComponent(query)}&count=8&language=en&format=json`);
-    const data = await res.json();
-    citySearchResults = data.results || [];
-    if (!citySearchResults.length) {
-      resultsEl.innerHTML = '<div class="empty">No matching cities found.</div>';
-      return;
-    }
-    resultsEl.innerHTML = citySearchResults.map((city, idx) => `
-      <div class="city-result city-pick" data-idx="${idx}">
-        <strong>${esc(city.name)}</strong>
-        <div class="small">${esc(city.country || '')}${city.admin1 ? ` · ${esc(city.admin1)}` : ''}</div>
-      </div>
-    `).join('');
-    resultsEl.querySelectorAll('.city-pick').forEach(btn => {
-      btn.addEventListener('click', async () => {
-        selectedSearch = citySearchResults[Number(btn.dataset.idx)];
-        await loadCityDetails(selectedSearch);
-      });
-    });
-  } catch (e) {
-    console.error('searchCities', e);
-    resultsEl.innerHTML = '<div class="empty">Search failed. Try again.</div>';
-  }
-}
-
-async function selectCityByName(cityName, countryName = '') {
-  try {
-    const res = await fetch(`${OPEN_METEO_GEOCODE}?name=${encodeURIComponent(cityName)}&count=8&language=en&format=json`);
-    const data = await res.json();
-    const match = (data.results || []).find(item => item.name.toLowerCase() === cityName.toLowerCase() && (!countryName || (item.country || '').toLowerCase() === countryName.toLowerCase())) || data.results?.[0];
-    if (!match) return showToast('Could not find that city right now.');
-    await loadCityDetails(match);
-  } catch (e) {
-    console.error('selectCityByName', e);
-    showToast('Could not load city.');
-  }
-}
-
-async function loadCityDetails(city) {
-  try {
-    const [weatherRes, countryRes] = await Promise.all([
-      fetch(`${OPEN_METEO_FORECAST}?latitude=${city.latitude}&longitude=${city.longitude}&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m&daily=weather_code,temperature_2m_max,temperature_2m_min&timezone=auto&forecast_days=7`),
-      fetch(`${REST_COUNTRIES}/alpha/${encodeURIComponent(city.country_code)}`)
-    ]);
-
-    const weather = await weatherRes.json();
-    const countryArr = await countryRes.json();
-    const country = Array.isArray(countryArr) ? countryArr[0] : null;
-
-    currentCity = {
-      ...city,
-      weather,
-      country,
-      logs: getPublicLogs().filter(log => log.city_name.toLowerCase() === city.name.toLowerCase())
-    };
-    currentView = 'city';
-    renderAppShell();
-    showToast(`${city.name} loaded.`);
-    const modal = document.querySelector('.modal');
-    if (modal) modal.remove();
-  } catch (e) {
-    console.error('loadCityDetails', e);
-    showToast('Could not load city details.');
-  }
-}
-
-function weatherLabel(code) {
-  const map = {
-    0: 'Clear', 1: 'Mainly clear', 2: 'Partly cloudy', 3: 'Overcast',
-    45: 'Fog', 48: 'Rime fog', 51: 'Light drizzle', 53: 'Drizzle', 55: 'Dense drizzle',
-    61: 'Rain', 63: 'Rain', 65: 'Heavy rain', 71: 'Snow', 80: 'Rain showers', 95: 'Thunderstorm'
-  };
-  return map[code] || 'Mixed';
-}
-
-function renderCityPage(container) {
-  if (!currentCity) {
-    container.innerHTML = `
-      <section class="section">
-        <div class="card empty">Pick a city to view live weather, country facts, and community logs.</div>
-      </section>
-    `;
-    return;
-  }
-
-  const country = currentCity.country || {};
-  const currencies = country.currencies ? Object.values(country.currencies).map(c => `${c.name} (${c.symbol || ''})`).join(', ') : 'Unavailable';
-  const languages = country.languages ? Object.values(country.languages).join(', ') : 'Unavailable';
-  const forecast = currentCity.weather?.daily?.time?.slice(0, 4).map((day, idx) => ({
-    day,
-    max: currentCity.weather.daily.temperature_2m_max[idx],
-    min: currentCity.weather.daily.temperature_2m_min[idx],
-    code: currentCity.weather.daily.weather_code[idx]
-  })) || [];
-  const cityLogs = getPublicLogs().filter(log => log.city_name.toLowerCase() === currentCity.name.toLowerCase());
-
-  container.innerHTML = `
-    <section class="section">
-      <div class="city-layout">
-        <div>
-          <div class="city-banner card stamp-card" id="city-banner">
-            <div class="parallax-layer parallax-grid" data-depth="12"></div>
-            <div class="parallax-layer parallax-compass" data-depth="24"><i class="fa-regular fa-compass"></i></div>
-            <div class="city-banner-content">
-              <div class="kicker">City explorer</div>
-              <h2 class="hero-title" style="font-size:2.5rem;">${esc(currentCity.name)}</h2>
-              <p class="hero-copy" style="margin-top:8px; max-width:50ch;">${esc(currentCity.country || '')}${currentCity.admin1 ? ` · ${esc(currentCity.admin1)}` : ''} · ${esc(weatherLabel(currentCity.weather?.current?.weather_code))} right now</p>
-              <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:18px;">
-                <button class="btn btn-primary" id="add-bucket-btn">Save to bucket list</button>
-                <button class="btn btn-secondary" id="city-create-log">Write log for this city</button>
-              </div>
-            </div>
-          </div>
-
-          <div class="section card stamp-card" style="padding:20px;">
-            <div class="section-title"><h2 style="font-size:1.35rem;">Adventure logs in ${esc(currentCity.name)}</h2></div>
-            <div class="log-list">
-              ${cityLogs.length ? cityLogs.map(log => renderLogCard(log, true)).join('') : '<div class="empty">No public logs for this city yet.</div>'}
-            </div>
-          </div>
-        </div>
-
-        <div class="side-stack">
-          <div class="card stamp-card" style="padding:20px;">
-            <div class="section-title" style="margin-bottom:10px;"><h2 style="font-size:1.3rem;">Country facts</h2></div>
-            <div class="info-grid">
-              <div class="info-box"><span>Country</span><strong>${esc(country.name?.common || currentCity.country || 'Unknown')}</strong></div>
-              <div class="info-box"><span>Population</span><strong>${country.population ? country.population.toLocaleString() : 'Unavailable'}</strong></div>
-              <div class="info-box"><span>Currency</span><strong>${esc(currencies)}</strong></div>
-              <div class="info-box"><span>Languages</span><strong>${esc(languages)}</strong></div>
-              <div class="info-box"><span>Region</span><strong>${esc(country.region || 'Unavailable')}</strong></div>
-              <div class="info-box"><span>Capital</span><strong>${esc(country.capital?.[0] || 'Unavailable')}</strong></div>
-            </div>
-          </div>
-
-          <div class="card stamp-card" style="padding:20px;">
-            <div class="section-title" style="margin-bottom:10px;"><h2 style="font-size:1.3rem;">Current weather</h2></div>
-            <div class="info-grid">
-              <div class="info-box"><span>Temperature</span><strong>${Math.round(currentCity.weather?.current?.temperature_2m ?? 0)}°C</strong></div>
-              <div class="info-box"><span>Humidity</span><strong>${Math.round(currentCity.weather?.current?.relative_humidity_2m ?? 0)}%</strong></div>
-              <div class="info-box"><span>Wind</span><strong>${Math.round(currentCity.weather?.current?.wind_speed_10m ?? 0)} km/h</strong></div>
-              <div class="info-box"><span>Condition</span><strong>${esc(weatherLabel(currentCity.weather?.current?.weather_code))}</strong></div>
-            </div>
-            <div class="forecast-grid">
-              ${forecast.map(day => `
-                <div class="forecast-day">
-                  <strong>${new Date(day.day).toLocaleDateString(undefined, { weekday: 'short' })}</strong>
-                  <div class="small" style="margin-top:8px;">${esc(weatherLabel(day.code))}</div>
-                  <div style="margin-top:8px; font-weight:800;">${Math.round(day.max)}° / ${Math.round(day.min)}°</div>
-                </div>
-              `).join('')}
-            </div>
-          </div>
-        </div>
-      </div>
-    </section>
-    <div class="footer-space"></div>
-  `;
-
-  document.getElementById('city-create-log').addEventListener('click', () => {
-    currentView = 'create';
-    renderAppShell();
-    setTimeout(() => {
-      const cityInput = document.getElementById('log-city');
-      if (cityInput) cityInput.value = currentCity.name;
-    }, 20);
-  });
-
-  document.getElementById('add-bucket-btn').addEventListener('click', async () => {
-    try {
-      if (bucketList.some(item => item.city_name.toLowerCase() === currentCity.name.toLowerCase())) {
-        return showToast('That city is already in your bucket list.');
-      }
-      const { error } = await supabase.from(T_BUCKET).insert({
-        city_name: currentCity.name,
-        country_name: currentCity.country || '',
-        country_code: currentCity.country_code || '',
-        lat: currentCity.latitude,
-        lng: currentCity.longitude,
-        notes: ''
-      });
-      if (error) throw error;
-      await loadAppData();
-      showToast('Saved to your bucket list.');
-    } catch (e) {
-      console.error('bucket', e);
-      showToast('Could not save this city.');
-    }
-  });
-
-  bindLogActions(container);
-  bindParallax();
-}
-
-function bindParallax() {
-  const banner = document.getElementById('city-banner');
-  if (!banner) return;
-  banner.addEventListener('mousemove', e => {
-    const rect = banner.getBoundingClientRect();
-    const x = (e.clientX - rect.left) / rect.width - 0.5;
-    const y = (e.clientY - rect.top) / rect.height - 0.5;
-    banner.querySelectorAll('.parallax-layer').forEach(layer => {
-      const depth = Number(layer.dataset.depth || 10);
-      layer.style.transform = `translate(${x * depth}px, ${y * depth}px)`;
-    });
-  });
-  banner.addEventListener('mouseleave', () => {
-    banner.querySelectorAll('.parallax-layer').forEach(layer => layer.style.transform = 'translate(0,0)');
-  });
-}
-
-function renderCreateLog(container) {
-  container.innerHTML = `
-    <section class="section">
-      <div class="two-col">
-        <div class="form-card card stamp-card">
-          <div class="section-title"><h2>Create adventure log</h2></div>
-          <div class="form-stack">
-            <div>
-              <label class="label">City</label>
-              <input class="input" id="log-city" placeholder="Search and match a city first">
-            </div>
-            <div>
-              <label class="label">Title</label>
-              <input class="input" id="log-title" placeholder="Sunrise markets and hidden alleys">
-            </div>
-            <div>
-              <label class="label">Notes</label>
-              <textarea class="textarea" id="log-notes" placeholder="What made this city memorable?"></textarea>
-            </div>
-            <div class="two-col" style="gap:12px;">
-              <div>
-                <label class="label">Rating</label>
-                <select class="select" id="log-rating">
-                  <option value="5">5 - unforgettable</option>
-                  <option value="4">4 - loved it</option>
-                  <option value="3">3 - solid trip</option>
-                  <option value="2">2 - mixed</option>
-                  <option value="1">1 - not for me</option>
-                </select>
-              </div>
-              <div>
-                <label class="label">Visit date</label>
-                <input class="input" id="log-date" type="date">
-              </div>
-            </div>
-            <div>
-              <label class="label">Tags</label>
-              <div class="tag-row">${TAG_OPTIONS.map(tag => `<label class="tag"><input type="checkbox" class="tag-check" value="${tag}" style="margin-right:6px;">${tag}</label>`).join('')}</div>
-            </div>
-            <div>
-              <label class="label">Visibility</label>
-              <select class="select" id="log-public">
-                <option value="true">Public log</option>
-                <option value="false">Private log</option>
-              </select>
-            </div>
-            <button class="btn btn-primary" id="create-log-btn">Publish adventure log</button>
-          </div>
-        </div>
-
-        <div class="city-search-card card stamp-card">
-          <div class="section-title"><h2 style="font-size:1.35rem;">Match a city</h2></div>
-          <p class="small">Use live Open-Meteo geocoding so your log links to a real city page with weather and country details.</p>
-          <div class="city-search-row" style="margin-top:14px;">
-            <input class="input" id="create-city-search" placeholder="Search city">
-            <button class="btn btn-secondary" id="create-city-search-btn">Find</button>
-          </div>
-          <div class="city-results" id="create-city-results"></div>
-          <div class="bucket-card card" style="margin-top:16px; padding:16px; background:rgba(255,255,255,0.03);">
-            <strong>Selected city</strong>
-            <div id="selected-city-box" class="small" style="margin-top:8px;">No city selected yet.</div>
-          </div>
-        </div>
-      </div>
-    </section>
-  `;
-
-  if (currentCity) {
-    document.getElementById('log-city').value = currentCity.name;
-    selectedSearch = currentCity;
-    document.getElementById('selected-city-box').innerHTML = `<strong>${esc(currentCity.name)}</strong><br>${esc(currentCity.country || '')}`;
-  }
-
-  document.getElementById('create-city-search-btn').addEventListener('click', async () => {
-    await searchCities(document.getElementById('create-city-search').value.trim(), document.getElementById('create-city-results'));
-  });
-
-  document.getElementById('create-log-btn').addEventListener('click', createAdventureLog);
-
-  const results = document.getElementById('create-city-results');
-  const observer = new MutationObserver(() => {
-    results.querySelectorAll('.city-pick').forEach(btn => {
-      btn.addEventListener('click', () => {
-        selectedSearch = citySearchResults[Number(btn.dataset.idx)];
-        document.getElementById('log-city').value = selectedSearch.name;
-        document.getElementById('selected-city-box').innerHTML = `<strong>${esc(selectedSearch.name)}</strong><br>${esc(selectedSearch.country || '')}`;
-      });
-    });
-  });
-  observer.observe(results, { childList: true, subtree: true });
-}
-
-async function createAdventureLog() {
-  try {
-    const cityName = document.getElementById('log-city').value.trim();
-    const title = document.getElementById('log-title').value.trim();
-    const notes = document.getElementById('log-notes').value.trim();
-    const rating = Number(document.getElementById('log-rating').value);
-    const visitDate = document.getElementById('log-date').value;
-    const isPublic = document.getElementById('log-public').value === 'true';
-    const tags = [...document.querySelectorAll('.tag-check:checked')].map(el => el.value);
-
-    if (!selectedSearch || selectedSearch.name.toLowerCase() !== cityName.toLowerCase()) {
-      return showToast('Please search and select a real city first.');
-    }
-    if (!title || !notes || !visitDate) return showToast('Fill in the title, notes, and visit date.');
-
-    const draft = {
-      title,
-      notes,
-      rating,
-      visit_date: visitDate,
-      tags,
-      city_name: selectedSearch.name,
-      country_name: selectedSearch.country || '',
-      country_code: selectedSearch.country_code || '',
-      lat: selectedSearch.latitude,
-      lng: selectedSearch.longitude,
-      is_public: isPublic,
-      upvotes_count: 0,
-      comments_count: 0,
-      trending_score: 0
-    };
-    draft.trending_score = trendingScore({ ...draft, created_at: new Date().toISOString() });
-
-    const { error } = await supabase.from(T_LOGS).insert(draft);
-    if (error) throw error;
-
-    await loadAppData();
-    currentView = 'city';
-    await loadCityDetails(selectedSearch);
-    showToast('Adventure log published.');
-  } catch (e) {
-    console.error('createAdventureLog', e);
-    showToast('Could not publish your log.');
-  }
-}
-
-function renderProfile(container) {
-  const myLogs = logs.filter(log => log.user_id === currentUser?.id);
-  const citiesExplored = [...new Set(myLogs.map(log => log.city_name))];
-  const totalUpvotesReceived = myLogs.reduce((sum, log) => sum + Number(log.upvotes_count || 0), 0);
-  const rank = getRank(myLogs.length);
-
-  container.innerHTML = `
-    <section class="section">
-      <div class="profile-hero">
-        <div class="profile-card card stamp-card">
-          <div class="profile-badge">${rank.badge}</div>
-          <h2 style="font-size:1.6rem;">${esc(currentProfile?.display_name || getDisplayName())}</h2>
-          <p class="small" style="margin-top:6px;">${esc(currentUser?.email || '')}</p>
-          <div class="rank-stamp"><i class="fa-solid ${rank.icon}"></i> ${rank.name}</div>
-          <div class="profile-stats">
-            <div class="profile-stat"><strong>${myLogs.length}</strong><span>Total logs</span></div>
-            <div class="profile-stat"><strong>${citiesExplored.length}</strong><span>Cities explored</span></div>
-            <div class="profile-stat"><strong>${totalUpvotesReceived}</strong><span>Upvotes received</span></div>
-            <div class="profile-stat"><strong>${bucketList.length}</strong><span>Bucket list</span></div>
-          </div>
-        </div>
-
-        <div class="bucket-card card stamp-card">
-          <div class="section-title"><h2 style="font-size:1.35rem;">Bucket list</h2></div>
-          <div class="log-list">
-            ${bucketList.length ? bucketList.map(item => `
-              <div class="city-result bucket-open" data-city="${esc(item.city_name)}" data-country="${esc(item.country_name || '')}">
-                <strong>${esc(item.city_name)}</strong>
-                <div class="small">${esc(item.country_name || '')}</div>
-              </div>
-            `).join('') : '<div class="empty">No saved cities yet.</div>'}
-          </div>
-        </div>
-      </div>
-
-      <div class="section two-col">
-        <div class="card stamp-card" style="padding:20px;">
-          <div class="section-title"><h2 style="font-size:1.35rem;">My recent logs</h2></div>
-          <div class="log-list">
-            ${myLogs.length ? myLogs.slice(0, 5).map(log => renderLogCard(log, true)).join('') : '<div class="empty">You have not written any logs yet.</div>'}
-          </div>
-        </div>
-        <div class="card stamp-card" style="padding:20px;">
-          <div class="section-title"><h2 style="font-size:1.35rem;">Passport progress</h2></div>
-          <div class="log-list">
-            <div class="meta-chip">Current rank: ${rank.name}</div>
-            <div class="meta-chip">Next milestone: ${myLogs.length < 6 ? '6 logs for Explorer' : myLogs.length < 16 ? '16 logs for Adventurer' : myLogs.length < 31 ? '31 logs for Globetrotter' : 'Top tier reached'}</div>
-            <div class="meta-chip">Favorite tags: ${[...new Set(myLogs.flatMap(log => log.tags || []))].slice(0, 4).join(', ') || 'Start tagging logs'}</div>
-          </div>
-        </div>
-      </div>
-    </section>
-  `;
-
-  container.querySelectorAll('.bucket-open').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      await selectCityByName(btn.dataset.city, btn.dataset.country);
-    });
-  });
-
-  bindLogActions(container);
-}
-
-function renderStats(container) {
-  const publicLogs = getPublicLogs();
-  const byCity = [...publicLogs.reduce((map, log) => {
-    const key = `${log.city_name}|${log.country_name}`;
-    if (!map.has(key)) map.set(key, { city: log.city_name, country: log.country_name, count: 0 });
-    map.get(key).count += 1;
-    return map;
-  }, new Map()).values()].sort((a, b) => b.count - a.count).slice(0, 8);
-
-  const travelers = [...publicLogs.reduce((map, log) => {
-    if (!map.has(log.user_id)) map.set(log.user_id, { userId: log.user_id, logs: 0, upvotes: 0 });
-    const item = map.get(log.user_id);
-    item.logs += 1;
-    item.upvotes += Number(log.upvotes_count || 0);
-    return map;
-  }, new Map()).values()].sort((a, b) => (b.logs + b.upvotes) - (a.logs + a.upvotes)).slice(0, 8);
-
-  const countryCounts = publicLogs.reduce((map, log) => {
-    const code = (log.country_code || '').toUpperCase();
-    if (!code) return map;
-    map[code] = (map[code] || 0) + 1;
-    return map;
-  }, {});
-
-  container.innerHTML = `
-    <section class="section">
-      <div class="two-col">
-        <div class="stats-card card stamp-card">
-          <div class="section-title"><h2>Most explored cities</h2></div>
-          <div class="log-list">
-            ${byCity.length ? byCity.map((item, idx) => `
-              <div class="city-result stats-city-open" data-city="${esc(item.city)}" data-country="${esc(item.country)}">
-                <strong>${idx + 1}. ${esc(item.city)}</strong>
-                <div class="small">${esc(item.country)} · ${item.count} logs</div>
-              </div>
-            `).join('') : '<div class="empty">No city data yet.</div>'}
-          </div>
-        </div>
-        <div class="stats-card card stamp-card">
-          <div class="section-title"><h2>Most active travelers</h2></div>
-          <div class="log-list">
-            ${travelers.length ? travelers.map((traveler, idx) => `
-              <div class="city-result">
-                <strong>${idx + 1}. Traveler ${idx + 1}</strong>
-                <div class="small">${traveler.logs} logs · ${traveler.upvotes} upvotes earned</div>
-              </div>
-            `).join('') : '<div class="empty">No traveler activity yet.</div>'}
-          </div>
-        </div>
-      </div>
-
-      <div class="section heatmap-card card stamp-card">
-        <div class="section-title"><h2>World heatmap</h2><p>Log density by country from public adventure logs.</p></div>
-        <div class="world-wrap">
-          ${renderWorldMap(countryCounts)}
-        </div>
-        <div class="legend-row">
-          <span class="small">Low</span>
-          <span class="legend-box" style="background:rgba(255,255,255,0.10)"></span>
-          <span class="legend-box" style="background:rgba(31,200,181,0.32)"></span>
-          <span class="legend-box" style="background:rgba(31,200,181,0.52)"></span>
-          <span class="legend-box" style="background:rgba(255,179,138,0.72)"></span>
-          <span class="legend-box" style="background:rgba(255,127,110,0.92)"></span>
-          <span class="small">High</span>
-        </div>
-      </div>
-    </section>
-  `;
-
-  container.querySelectorAll('.stats-city-open').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      await selectCityByName(btn.dataset.city, btn.dataset.country);
-    });
-  });
-}
-
-function renderWorldMap(countryCounts) {
-  const max = Math.max(1, ...Object.values(countryCounts));
-  const heatClass = code => {
-    const count = countryCounts[code] || 0;
-    if (count === 0) return 'hot-0';
-    const ratio = count / max;
-    if (ratio < 0.26) return 'hot-1';
-    if (ratio < 0.51) return 'hot-2';
-    if (ratio < 0.76) return 'hot-3';
-    return 'hot-4';
-  };
+function renderHome() {
+  const recent = [...state.spots].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 6)
+  const nearby = highestRatedNearby(6)
   return `
-    <svg class="world-map" viewBox="0 0 1100 620" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="World heatmap">
-      <rect x="0" y="0" width="1100" height="620" fill="rgba(255,255,255,0.02)" rx="24" />
-      ${WORLD_REGIONS.map(region => `<path class="land ${heatClass(region.code)}" d="${region.path}"><title>${region.name}: ${countryCounts[region.code] || 0} logs</title></path>`).join('')}
-    </svg>
-  `;
+    <div class="page-shell">
+      <section class="hero">
+        <div class="hero-grid">
+          <div class="card hero-main stamp-card">
+            <div class="kicker">Street food explorer</div>
+            <h1 class="hero-title">Find the loudest flavors around you.</h1>
+            <p class="hero-copy">Drop GPS-tagged street food spots, review them, and stitch them into food crawls with walk times.</p>
+            <div class="hero-actions">
+              <button class="btn btn-primary" data-nav="add">Add a spot</button>
+              <button class="btn btn-secondary" data-nav="map">Open map</button>
+              <button class="btn btn-ghost" data-nav="bucket">Saved areas</button>
+            </div>
+            <div class="mini-stats">
+              <div class="stat-pill"><strong>${state.spots.length}</strong><span>Spots discovered</span></div>
+              <div class="stat-pill"><strong>${state.reviews.length}</strong><span>Reviews dropped</span></div>
+              <div class="stat-pill"><strong>${state.crawls.length}</strong><span>Food crawls mapped</span></div>
+            </div>
+          </div>
+          <div class="card hero-side stamp-card">
+            <div class="kicker">Local context</div>
+            <h3 style="margin-top:10px; font-size:1.3rem;">${escapeHtml(state.country?.flag || '')} ${escapeHtml(state.country?.city || 'Unknown area')}</h3>
+            <p class="hero-copy">${state.weather?.current ? `${Math.round(state.weather.current.temperature_2m)} degrees now, feels like ${Math.round(state.weather.current.apparent_temperature)}. ` : ''}${escapeHtml(state.country?.name || '')}</p>
+            <div class="meta-row">
+              <span class="meta-chip">Currencies: ${escapeHtml(state.country?.currencies || '-')}</span>
+              <span class="meta-chip">Languages: ${escapeHtml(state.country?.languages || '-')}</span>
+            </div>
+            <div class="meta-row">
+              <span class="meta-chip">Population: ${state.country?.population ? Number(state.country.population).toLocaleString() : '-'}</span>
+              <span class="meta-chip">Source: ${state.geoSource === 'device' ? 'Device GPS' : 'Fallback city'}</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-title">
+          <div><h2>Recently added spots</h2><p>Fresh pins from the community.</p></div>
+        </div>
+        <div class="grid feed-grid">
+          <div class="log-list">
+            ${recent.length ? recent.map(renderSpotCard).join('') : `<div class="card log-card">No spots yet. Be the first to tag a food gem.</div>`}
+          </div>
+          <div class="side-stack">
+            <div class="card stats-card stamp-card">
+              <div class="section-title"><div><h2 style="font-size:1.25rem;">Highest rated nearby</h2><p>Weighted for quality and distance.</p></div></div>
+              ${nearby.length ? nearby.map(spot => `<div style="padding:14px 0; border-top:1px solid var(--border);"><strong>${escapeHtml(spot.name)}</strong><div class="log-city">${spot.country_flag || ''} ${escapeHtml((spot.food_tags || []).join(', '))}</div><div class="meta-row"><span class="meta-chip">${Number.isFinite(spot.distance) ? `${spot.distance.toFixed(1)} km away` : 'Distance unavailable'}</span><span class="meta-chip">${spot.stats.count} reviews</span></div><div class="meta-row"><button class="btn btn-ghost open-spot" data-spot-id="${spot.id}">Open</button></div></div>`).join('') : `<div class="card log-card">Add reviews to surface nearby legends.</div>`}
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  `
 }
 
-function openCityPickerModal() {
-  const modal = document.createElement('div');
-  modal.className = 'modal';
-  modal.innerHTML = `
-    <div class="modal-card card stamp-card">
-      <div class="section-title"><h2 style="font-size:1.4rem;">Pick a city</h2></div>
-      <div class="city-search-row">
-        <input class="input" id="modal-city-input" placeholder="Search city">
-        <button class="btn btn-primary" id="modal-city-search">Search</button>
-      </div>
-      <div class="city-results" id="modal-city-results"></div>
-      <div style="margin-top:14px; display:flex; justify-content:flex-end;">
-        <button class="btn btn-ghost" id="close-city-modal">Close</button>
+function renderMapPage() {
+  return `
+    <div class="page-shell section">
+      <div class="grid feed-grid">
+        <div class="card stats-card stamp-card">
+          <div class="section-title"><div><h2>Live map</h2><p>Location-aware browsing and nearby ranking.</p></div></div>
+          ${highestRatedNearby(8).map(spot => `<div style="padding:12px 0; border-top:1px solid var(--border);"><strong>${escapeHtml(spot.name)}</strong><div class="log-city">${Number.isFinite(spot.distance) ? spot.distance.toFixed(1) : '-'} km � ${spot.stats.overall.toFixed(1)} star � ${(spot.food_tags || []).join(', ')}</div><div class="meta-row"><button class="btn btn-ghost open-spot" data-spot-id="${spot.id}">Open</button></div></div>`).join('') || `<div class="card log-card">Add spots to light up the map.</div>`}
+        </div>
+        <div class="side-stack">
+          <div class="card stats-card stamp-card">
+            <div class="section-title"><div><h2 style="font-size:1.25rem;">Saved areas</h2><p>Quick jump zones for repeat hunts.</p></div></div>
+            ${state.savedAreas.length ? state.savedAreas.slice(0, 6).map(area => `<div style="padding:12px 0; border-top:1px solid var(--border);"><strong>${escapeHtml(area.label)}</strong><div class="log-city">${escapeHtml(area.city_name || 'Area')} � ${escapeHtml(area.country_name || '')} � radius ${Number(area.radius_km || 5).toFixed(1)} km</div></div>`).join('') : `<div class="card log-card">Save a city or area from the bucket list tab.</div>`}
+          </div>
+        </div>
       </div>
     </div>
-  `;
-  document.body.appendChild(modal);
-  modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
-  document.getElementById('close-city-modal').addEventListener('click', () => modal.remove());
-  document.getElementById('modal-city-search').addEventListener('click', async () => {
-    await searchCities(document.getElementById('modal-city-input').value.trim(), document.getElementById('modal-city-results'));
-  });
+  `
 }
 
-function openCommentModal(logId) {
-  const log = logs.find(item => item.id === logId);
-  if (!log) return;
-  const modal = document.createElement('div');
-  modal.className = 'modal';
-  modal.innerHTML = `
-    <div class="modal-card card stamp-card">
-      <div class="section-title"><h2 style="font-size:1.4rem;">Comment on ${esc(log.title)}</h2></div>
-      <textarea class="textarea" id="comment-text" placeholder="Share a tip, memory, or reaction..."></textarea>
-      <div style="margin-top:14px; display:flex; gap:10px; justify-content:flex-end;">
-        <button class="btn btn-ghost" id="comment-cancel">Cancel</button>
-        <button class="btn btn-primary" id="comment-submit">Post comment</button>
+function renderAddSpot() {
+  return `
+    <div class="page-shell section">
+      <div class="grid feed-grid">
+        <div class="card form-card stamp-card">
+          <div class="section-title"><div><h2>Add a street food spot</h2><p>Coordinates come from browser geolocation, with a fallback city if GPS is blocked.</p></div></div>
+          <form id="spot-form" class="form-stack">
+            <div>
+              <label class="label">Spot name</label>
+              <input class="input" name="name" required placeholder="Midnight Tacos Cart">
+            </div>
+            <div>
+              <label class="label">Description</label>
+              <textarea class="textarea" name="description" required placeholder="Why this place hits, what to order, and the vibe."></textarea>
+            </div>
+            <div class="info-grid">
+              <div>
+                <label class="label">Price range</label>
+                <select class="select" name="price_range">${PRICE_OPTIONS.map(p => `<option value="${p}">${p}</option>`).join('')}</select>
+              </div>
+              <div>
+                <label class="label">GPS capture</label>
+                <div class="meta-chip" style="padding:14px 16px; display:block;">${state.geo ? `${state.geo.latitude.toFixed(5)}, ${state.geo.longitude.toFixed(5)} � ${state.geoSource === 'device' ? 'device' : 'fallback'}` : 'Location unavailable'}</div>
+              </div>
+            </div>
+            <div>
+              <label class="label">Food type tags</label>
+              <div class="tag-row">
+                ${FOOD_TYPES.map(tag => `<label class="tag" style="cursor:pointer;"><input type="checkbox" name="food_tags" value="${tag}" style="margin-right:8px;">${tag}</label>`).join('')}
+              </div>
+            </div>
+            <button class="btn btn-primary" type="submit">Save spot</button>
+          </form>
+        </div>
+        <div class="side-stack">
+          <div class="card stats-card stamp-card">
+            <h3 style="margin-bottom:8px;">Auto-tagging</h3>
+            <p class="hero-copy">The app uses browser geolocation first, then reverse geocoding and country lookup to tag each spot. If device GPS is unavailable, it falls back to Los Angeles so the flow still works.</p>
+          </div>
+        </div>
       </div>
     </div>
-  `;
-  document.body.appendChild(modal);
-  modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
-  document.getElementById('comment-cancel').addEventListener('click', () => modal.remove());
-  document.getElementById('comment-submit').addEventListener('click', async () => {
-    const text = document.getElementById('comment-text').value.trim();
-    if (!text) return showToast('Write a comment first.');
-    try {
-      const { error } = await supabase.from(T_COMMENTS).insert({
-        log_id: logId,
-        log_owner_id: log.user_id,
-        comment_text: text
-      });
-      if (error) throw error;
-      await supabase.from(T_LOGS).update({
-        comments_count: (log.comments_count || 0) + 1,
-        trending_score: trendingScore({ ...log, comments_count: (log.comments_count || 0) + 1 })
-      }).eq('id', logId);
-      await loadAppData();
-      modal.remove();
-      renderAppShell();
-      showToast('Comment posted.');
-    } catch (e) {
-      console.error('comment', e);
-      showToast('Could not post comment.');
+  `
+}
+
+function renderSpotPage() {
+  const spot = state.spots.find(s => s.id === state.currentSpotId) || state.spots[0]
+  if (!spot) return `<div class="page-shell section"><div class="card log-card">No spot selected yet.</div></div>`
+  state.currentSpotId = spot.id
+  const stats = reviewStatsForSpot(spot.id)
+  const owner = profileFor(spot.user_id)
+  const comments = commentTreeForSpot(spot.id)
+  return `
+    <div class="page-shell section">
+      <div class="card city-banner stamp-card">
+        <div class="parallax-layer parallax-grid"></div>
+        <div class="parallax-layer parallax-compass"><i class="fa-solid fa-location-dot"></i></div>
+        <div class="city-banner-content">
+          <div class="kicker">${spot.country_flag || ''} ${escapeHtml(spot.country_name || 'Local streets')}</div>
+          <h1 class="hero-title">${escapeHtml(spot.name)}</h1>
+          <p class="hero-copy">${escapeHtml(spot.description || '')}</p>
+          <div class="tag-row">${(spot.food_tags || []).map(tag => `<span class="tag">${escapeHtml(tag)}</span>`).join('')}<span class="meta-chip">${escapeHtml(spot.price_range)}</span><span class="meta-chip">Pinned by ${escapeHtml(owner?.display_name || 'Food scout')}</span></div>
+        </div>
+      </div>
+
+      <div class="grid feed-grid" style="margin-top:16px;">
+        <div class="side-stack">
+          <div class="card stats-card stamp-card">
+            <div class="section-title"><div><h2>Community ratings</h2><p>Taste, portion size, and value.</p></div></div>
+            <div class="info-grid">
+              <div class="info-box"><strong>${stats.taste.toFixed(1)}</strong><div class="log-city">Taste</div></div>
+              <div class="info-box"><strong>${stats.portion.toFixed(1)}</strong><div class="log-city">Portion</div></div>
+              <div class="info-box"><strong>${stats.value.toFixed(1)}</strong><div class="log-city">Value</div></div>
+              <div class="info-box"><strong>${stats.overall.toFixed(1)}</strong><div class="log-city">Overall</div></div>
+            </div>
+          </div>
+          <div class="card form-card stamp-card">
+            <div class="section-title"><div><h2>Leave a review</h2><p>Tell the next foodie what to expect.</p></div></div>
+            <form id="review-form" class="form-stack">
+              <div class="info-grid">
+                <div><label class="label">Taste</label><select class="select" name="taste_rating">${[1,2,3,4,5].map(n => `<option value="${n}">${n}</option>`).join('')}</select></div>
+                <div><label class="label">Portion</label><select class="select" name="portion_rating">${[1,2,3,4,5].map(n => `<option value="${n}">${n}</option>`).join('')}</select></div>
+                <div><label class="label">Value</label><select class="select" name="value_rating">${[1,2,3,4,5].map(n => `<option value="${n}">${n}</option>`).join('')}</select></div>
+              </div>
+              <div><label class="label">Review</label><textarea class="textarea" name="review_text" placeholder="What should people order? Was it worth the wait?"></textarea></div>
+              <button class="btn btn-primary" type="submit">Drop review</button>
+            </form>
+          </div>
+          <div class="side-stack">
+            ${stats.reviews.length ? stats.reviews.map(review => {
+              const profile = profileFor(review.user_id)
+              return `<div class="card log-card stamp-card"><div class="log-head"><div><strong>${escapeHtml(profile?.display_name || 'Food scout')}</strong><div class="log-city">${fmtDateTime(review.created_at)}</div></div><div class="meta-chip">${Math.round(avg([review.taste_rating, review.portion_rating, review.value_rating]))} star</div></div><p class="log-notes">${escapeHtml(review.review_text || '')}</p><div class="meta-row"><span class="meta-chip">Taste ${review.taste_rating}</span><span class="meta-chip">Portion ${review.portion_rating}</span><span class="meta-chip">Value ${review.value_rating}</span></div></div>`
+            }).join('') : `<div class="card log-card">No reviews yet. Be the first to rate it.</div>`}
+          </div>
+          <div class="card form-card stamp-card">
+            <div class="section-title"><div><h2>Comments</h2><p>Quick reactions, tips, and replies.</p></div></div>
+            <form id="comment-form" class="form-stack">
+              <input type="hidden" name="parent_comment_id" value="${escapeHtml(state.currentReplyParentId || '')}">
+              <div><label class="label">Comment ${state.currentReplyParentId ? '(replying)' : ''}</label><textarea class="textarea" name="comment_text" placeholder="Best order? Best time to go? Parking tricks?"></textarea></div>
+              <button class="btn btn-primary" type="submit">Post comment</button>
+            </form>
+            <div class="comment-list" style="display:grid; margin-top:18px;">
+              ${comments.length ? comments.map(renderCommentCard).join('') : `<div class="card log-card">No comments yet. Start the conversation.</div>`}
+            </div>
+          </div>
+        </div>
+        <div class="side-stack">
+          <div class="card stats-card stamp-card">
+            <h3 style="margin-bottom:8px;">Spot details</h3>
+            <div class="meta-row">
+              <span class="meta-chip">Lat ${Number(spot.latitude).toFixed(4)}</span>
+              <span class="meta-chip">Lon ${Number(spot.longitude).toFixed(4)}</span>
+            </div>
+            <div class="meta-row">
+              <span class="meta-chip">Added ${fmtDate(spot.created_at)}</span>
+              <span class="meta-chip">${state.geo ? `${distanceKm(state.geo.latitude, state.geo.longitude, Number(spot.latitude), Number(spot.longitude)).toFixed(1)} km away` : 'Distance unavailable'}</span>
+            </div>
+          </div>
+          <div class="card stats-card stamp-card">
+            <h3 style="margin-bottom:8px;">Foodie who found it</h3>
+            <div class="log-city">${escapeHtml(owner?.display_name || 'Food scout')}</div>
+            <div class="meta-row"><span class="meta-chip">${buildProfileSummary(spot.user_id).spotCount} spots</span><span class="meta-chip">${buildProfileSummary(spot.user_id).reviewCount} reviews</span><span class="meta-chip">${buildProfileSummary(spot.user_id).rank.name}</span></div>
+            <div class="meta-row"><button class="btn btn-ghost open-profile" data-user-id="${spot.user_id}">Open profile</button></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `
+}
+
+function renderCommentCard(comment) {
+  const liked = state.commentLikes.some(like => like.comment_id === comment.id && like.user_id === state.user?.id)
+  return `
+    <div class="card log-card">
+      <div class="log-head">
+        <div>
+          <strong>${escapeHtml(comment.profile?.display_name || 'Food scout')}</strong>
+          <div class="log-city">${fmtDateTime(comment.created_at)}</div>
+        </div>
+        <div class="meta-chip">${comment.likes} likes</div>
+      </div>
+      <p class="log-notes">${escapeHtml(comment.comment_text || '')}</p>
+      <div class="meta-row">
+        <button class="btn btn-ghost toggle-comment-like" data-comment-id="${comment.id}">${liked ? 'Liked' : 'Like'}</button>
+        <button class="btn btn-ghost reply-comment" data-comment-id="${comment.id}">Reply</button>
+      </div>
+      ${comment.replies?.length ? `<div style="display:grid; gap:10px; margin-top:12px; padding-left:14px; border-left:2px solid rgba(255,255,255,0.08);">${comment.replies.map(reply => {
+        const replyLiked = state.commentLikes.some(like => like.comment_id === reply.id && like.user_id === state.user?.id)
+        return `<div class="card log-card"><div class="log-head"><div><strong>${escapeHtml(reply.profile?.display_name || 'Food scout')}</strong><div class="log-city">${fmtDateTime(reply.created_at)}</div></div><div class="meta-chip">${reply.likes} likes</div></div><p class="log-notes">${escapeHtml(reply.comment_text || '')}</p><div class="meta-row"><button class="btn btn-ghost toggle-comment-like" data-comment-id="${reply.id}">${replyLiked ? 'Liked' : 'Like'}</button></div></div>`
+      }).join('')}</div>` : ''}
+    </div>
+  `
+}
+
+function renderCrawls() {
+  const availableSpots = state.spots.slice(0, 20)
+  const myClones = state.user?.id ? state.crawlClones.filter(c => c.user_id === state.user.id) : []
+  return `
+    <div class="page-shell section">
+      <div class="grid feed-grid">
+        <div class="card form-card stamp-card">
+          <div class="section-title"><div><h2>Create a food crawl</h2><p>Build a 3 to 7 stop route with estimated walk times.</p></div></div>
+          <form id="crawl-form" class="form-stack">
+            <div><label class="label">Crawl name</label><input class="input" name="name" required placeholder="Late Night Neon Noodles"></div>
+            <div><label class="label">Description</label><textarea class="textarea" name="description" placeholder="What makes this route worth the walk?"></textarea></div>
+            <div>
+              <label class="label">Pick 3 to 7 spots in order</label>
+              <div class="side-stack" style="max-height:320px; overflow:auto;">
+                ${availableSpots.length ? availableSpots.map(spot => `<label class="card" style="padding:12px 14px; border-radius:16px; cursor:pointer;"><input type="checkbox" name="spot_ids" value="${spot.id}" style="margin-right:10px;"> <strong>${escapeHtml(spot.name)}</strong><div class="log-city">${escapeHtml((spot.food_tags || []).join(', '))} � ${escapeHtml(spot.country_flag || '')}</div></label>`).join('') : `<div class="card log-card">Add spots first to build a crawl.</div>`}
+              </div>
+            </div>
+            <button class="btn btn-primary" type="submit">Map this crawl</button>
+          </form>
+        </div>
+        <div class="side-stack">
+          <div class="card stats-card stamp-card">
+            <div class="section-title"><div><h2>Public crawls</h2><p>Clone one and complete it.</p></div></div>
+            ${state.crawls.length ? state.crawls.map(crawl => {
+              const stops = crawlStopsFor(crawl.id)
+              return `<div style="padding:14px 0; border-top:1px solid var(--border);"><div class="log-head"><div><strong>${escapeHtml(crawl.name)}</strong><div class="log-city">${escapeHtml(crawl.city_name || 'Local')} � ${stops.length} stops</div></div><button class="btn btn-secondary clone-crawl" data-crawl-id="${crawl.id}">Clone</button></div><p class="log-notes">${escapeHtml(crawl.description || '')}</p><div class="meta-row">${stops.map(stop => `<span class="meta-chip">${stop.stop_order}. ${escapeHtml(stop.spot?.name || 'Spot')} ${stop.estimated_walk_minutes ? `� ${stop.estimated_walk_minutes} min` : ''}</span>`).join('')}</div></div>`
+            }).join('') : `<div class="card log-card">No public crawls yet.</div>`}
+          </div>
+          <div class="card stats-card stamp-card">
+            <div class="section-title"><div><h2>Your cloned crawls</h2><p>Mark stops visited and finish strong.</p></div></div>
+            ${myClones.length ? myClones.map(clone => {
+              const stops = cloneStopsFor(clone.id)
+              const allVisited = stops.length && stops.every(s => s.visited)
+              return `<div style="padding:14px 0; border-top:1px solid var(--border);"><strong>${escapeHtml(state.crawls.find(c => c.id === clone.crawl_id)?.name || 'Crawl')}</strong><div class="log-city">${clone.status === 'completed' ? `Completed ${fmtDate(clone.completed_at)}` : 'In progress'}</div><div class="side-stack" style="margin-top:10px;">${stops.map(stop => `<div class="card" style="padding:10px 12px; border-radius:14px;">${stop.visited ? 'Done' : 'Open'} ${stop.stop_order}. ${escapeHtml(stop.spot?.name || 'Spot')} ${!stop.visited && clone.status !== 'completed' ? `<button class="btn btn-ghost mark-stop" data-clone-stop-id="${stop.id}" style="margin-left:10px;">Visited</button>` : ''}</div>`).join('')}</div>${clone.status !== 'completed' && allVisited ? `<div class="form-stack" style="margin-top:12px;"><input class="input complete-rating" data-clone-id="${clone.id}" type="number" min="1" max="5" placeholder="Overall rating 1-5"><textarea class="textarea complete-notes" data-clone-id="${clone.id}" placeholder="How was the crawl overall?"></textarea><button class="btn btn-primary complete-crawl" data-clone-id="${clone.id}">Complete crawl</button></div>` : ''}${clone.status === 'completed' ? `<div class="meta-row"><span class="meta-chip">Overall ${clone.overall_rating || '-'}</span><span class="meta-chip">${escapeHtml(clone.notes || '')}</span></div>` : ''}</div>`
+            }).join('') : `<div class="card log-card">Clone a public crawl to track your route.</div>`}
+          </div>
+        </div>
+      </div>
+    </div>
+  `
+}
+
+function renderBucketList() {
+  return `
+    <div class="page-shell section">
+      <div class="grid feed-grid">
+        <div class="card bucket-card stamp-card">
+          <div class="section-title"><div><h2>Save a city or food area</h2><p>Build a bucket list of places you want to hunt next.</p></div></div>
+          <form id="bucket-form" class="form-stack">
+            <div class="info-grid">
+              <div><label class="label">Label</label><input class="input" name="label" required placeholder="Downtown ramen run"></div>
+              <div><label class="label">City name</label><input class="input" name="city_name" value="${escapeHtml(state.country?.city || '')}" placeholder="Los Angeles"></div>
+            </div>
+            <div class="info-grid">
+              <div><label class="label">Country name</label><input class="input" name="country_name" value="${escapeHtml(state.country?.name || '')}" placeholder="United States"></div>
+              <div><label class="label">Radius km</label><input class="input" name="radius_km" type="number" min="1" max="50" step="0.5" value="5"></div>
+            </div>
+            <div><label class="label">Notes</label><textarea class="textarea" name="notes" placeholder="Night market, best after 8pm, heard the dumplings are wild."></textarea></div>
+            <button class="btn btn-primary" type="submit">Save to bucket list</button>
+          </form>
+        </div>
+        <div class="side-stack">
+          <div class="card bucket-card stamp-card">
+            <div class="section-title"><div><h2>Saved areas</h2><p>Saved places from your account.</p></div></div>
+            ${state.savedAreas.length ? state.savedAreas.map(area => `<div style="padding:12px 0; border-top:1px solid var(--border);"><strong>${escapeHtml(area.label)}</strong><div class="log-city">${escapeHtml(area.city_name || 'Area')} � ${escapeHtml(area.country_name || '')}</div><div class="meta-row"><span class="meta-chip">${Number(area.radius_km || 5).toFixed(1)} km radius</span><span class="meta-chip">Pinned at ${Number(area.latitude).toFixed(3)}, ${Number(area.longitude).toFixed(3)}</span></div></div>`).join('') : `<div class="card log-card">No saved areas yet.</div>`}
+          </div>
+        </div>
+      </div>
+    </div>
+  `
+}
+
+function renderProfile() {
+  const userId = state.currentProfileUserId || state.user?.id || null
+  if (!userId) {
+    return `<div class="page-shell section"><div class="card log-card">Sign in to view your foodie profile.</div></div>`
+  }
+  const summary = buildProfileSummary(userId)
+  const cloud = mostExploredFoodTypes(userId)
+  const recentSpots = state.spots.filter(s => s.user_id === userId).slice(0, 6)
+  const recentReviews = state.reviews.filter(r => r.user_id === userId).slice(0, 6)
+  return `
+    <div class="page-shell section">
+      <div class="grid feed-grid">
+        <div class="side-stack">
+          <div class="card profile-card stamp-card">
+            <div class="kicker">Foodie profile</div>
+            <h1 class="hero-title" style="font-size:2.2rem;">${escapeHtml(summary.profile?.display_name || 'Food scout')}</h1>
+            <p class="hero-copy">${escapeHtml(summary.profile?.email || '')}</p>
+            <div class="meta-row"><span class="meta-chip">${summary.rank.icon} ${summary.rank.name}</span></div>
+            <div class="mini-stats">
+              <div class="stat-pill"><strong>${summary.spotCount}</strong><span>Spots</span></div>
+              <div class="stat-pill"><strong>${summary.reviewCount}</strong><span>Reviews</span></div>
+              <div class="stat-pill"><strong>${summary.completed}</strong><span>Crawls</span></div>
+            </div>
+          </div>
+          <div class="card stats-card stamp-card">
+            <div class="section-title"><div><h2>Tag cloud</h2><p>Most reviewed food types.</p></div></div>
+            <div class="tag-row">
+              ${cloud.length ? cloud.map(([tag, count]) => `<span class="tag">${escapeHtml(tag)} x ${count}</span>`).join('') : `<div class="card log-card">Review spots to grow the tag cloud.</div>`}
+            </div>
+          </div>
+        </div>
+        <div class="side-stack">
+          <div class="card stats-card stamp-card">
+            <div class="section-title"><div><h2>Recent discoveries</h2><p>Latest spots found by this foodie.</p></div></div>
+            ${recentSpots.length ? recentSpots.map(renderSpotCard).join('') : `<div class="card log-card">No public discoveries yet.</div>`}
+          </div>
+          <div class="card stats-card stamp-card">
+            <div class="section-title"><div><h2>Recent reviews</h2><p>What this foodie has been saying lately.</p></div></div>
+            ${recentReviews.length ? recentReviews.map(review => {
+              const spot = state.spots.find(s => s.id === review.spot_id)
+              return `<div style="padding:12px 0; border-top:1px solid var(--border);"><strong>${escapeHtml(spot?.name || 'Spot')}</strong><div class="log-city">${fmtDateTime(review.created_at)}</div><p class="log-notes">${escapeHtml(review.review_text || '')}</p></div>`
+            }).join('') : `<div class="card log-card">No reviews yet.</div>`}
+          </div>
+        </div>
+      </div>
+    </div>
+  `
+}
+
+function renderApp() {
+  if (!state.user) {
+    state.screen = 'auth'
+    return renderAuth()
+  }
+  let body = ''
+  if (state.nav === 'home') body = renderHome()
+  if (state.nav === 'map') body = renderMapPage()
+  if (state.nav === 'add') body = renderAddSpot()
+  if (state.nav === 'spot') body = renderSpotPage()
+  if (state.nav === 'crawls') body = renderCrawls()
+  if (state.nav === 'bucket') body = renderBucketList()
+  if (state.nav === 'profile') body = renderProfile()
+
+  return `
+    ${renderTopbar()}
+    ${state.notice ? `<div class="page-shell" style="padding-top:14px;"><div class="card" style="padding:14px 18px; border-radius:18px; background:rgba(255,127,110,0.14); border-color:rgba(255,127,110,0.25);">${escapeHtml(state.notice)}</div></div>` : ''}
+    ${body}
+  `
+}
+
+function render() {
+  if (state.screen === 'loading') app.innerHTML = renderLoading()
+  else if (state.screen === 'auth') app.innerHTML = renderAuth()
+  else if (state.screen === 'check-email') app.innerHTML = renderCheckEmail()
+  else app.innerHTML = renderApp()
+  bindEvents()
+}
+
+async function enterAppWithSession(session) {
+  const nextUser = session?.user || null
+  state.session = session || null
+  state.user = nextUser
+
+  if (!nextUser) {
+    state.appUser = null
+    state.currentProfileUserId = null
+    state.currentSpotId = null
+    state.personalizedFeed = []
+    state.nav = 'home'
+    state.screen = 'auth'
+    state.authMode = 'signin'
+    render()
+    return
+  }
+
+  await ensureAppUser(nextUser)
+  await loadData()
+  state.screen = 'app'
+  state.authMode = 'signin'
+  render()
+}
+
+const handleAuthSubmit = safeRun(async event => {
+  event.preventDefault()
+  if (state.authBusy) return
+
+  const form = new FormData(event.currentTarget)
+  const email = String(form.get('email') || '').trim().toLowerCase()
+  const password = String(form.get('password') || '').trim()
+
+  setAuthError('')
+  const requestId = beginAuthWork(state.authMode === 'signup' ? 'Creating account...' : 'Signing in...')
+  render()
+
+  try {
+    if (state.authMode === 'signup') {
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: { emailRedirectTo: 'https://sling-gogiapp.web.app/email-confirmed.html' }
+      })
+
+      if (error && /already been registered|user already registered/i.test(error.message)) {
+        const signIn = await supabase.auth.signInWithPassword({ email, password })
+        if (signIn.error) {
+          setAuthError(normalizeAuthMessage(signIn.error.message))
+          return
+        }
+        await enterAppWithSession(signIn.data.session)
+        return
+      }
+
+      if (error) {
+        setAuthError(normalizeAuthMessage(error.message))
+        return
+      }
+
+      if (data?.session?.user) {
+        await enterAppWithSession(data.session)
+        return
+      }
+
+      state.pendingEmail = email
+      state.authMode = 'signin'
+      state.screen = 'check-email'
+      render()
+      return
     }
-  });
+
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password })
+    if (error) {
+      setAuthError(normalizeAuthMessage(error.message))
+      return
+    }
+
+    await enterAppWithSession(data.session)
+  } finally {
+    finishAuthWork(requestId)
+    render()
+  }
+})
+
+const signOut = safeRun(async () => {
+  if (state.authTimeoutId) {
+    clearTimeout(state.authTimeoutId)
+    state.authTimeoutId = null
+  }
+  state.authBusy = false
+  state.authMessage = ''
+  state.authProcessingSession = false
+  await supabase.auth.signOut()
+  await enterAppWithSession(null)
+})
+
+const saveSpot = safeRun(async event => {
+  event.preventDefault()
+  const form = new FormData(event.currentTarget)
+  const selectedTags = FOOD_TYPES.filter(tag => form.getAll('food_tags').includes(tag))
+  let coords = state.geo
+  if (!coords || state.geoSource !== 'device') {
+    toast('Trying to get your location...')
+    const freshCoords = await detectLocation(true)
+    if (freshCoords) {
+      coords = freshCoords
+      state.geo = coords
+      state.geoSource = 'device'
+      await fetchCountryAndWeather()
+      render()
+    }
+  }
+  if (!coords) {
+    applyFallbackLocation('Device location blocked. Saving spot with fallback city center.')
+    coords = state.geo
+    await fetchCountryAndWeather()
+    render()
+  }
+  const payload = {
+    name: String(form.get('name') || '').trim(),
+    food_tags: selectedTags,
+    price_range: String(form.get('price_range') || '$'),
+    description: String(form.get('description') || '').trim(),
+    latitude: coords.latitude,
+    longitude: coords.longitude,
+    country_name: state.country?.name || '',
+    country_code: state.country?.code || '',
+    country_flag: state.country?.flag || '',
+    is_public: true
+  }
+  const { error } = await supabase.from(TABLES.spots).insert(payload)
+  if (error) throw error
+  event.currentTarget.reset()
+  await loadData()
+  state.nav = 'home'
+  toast(state.geoSource === 'device' ? 'Spot saved.' : 'Spot saved with fallback city coordinates.')
+  render()
+})
+
+const saveReview = safeRun(async event => {
+  event.preventDefault()
+  const form = new FormData(event.currentTarget)
+  const existing = state.reviews.find(r => r.spot_id === state.currentSpotId && r.user_id === state.user.id)
+  if (existing) {
+    toast('You already reviewed this spot.')
+    return
+  }
+  const payload = {
+    spot_id: state.currentSpotId,
+    taste_rating: Number(form.get('taste_rating') || 0),
+    portion_rating: Number(form.get('portion_rating') || 0),
+    value_rating: Number(form.get('value_rating') || 0),
+    review_text: String(form.get('review_text') || '').trim()
+  }
+  const { error } = await supabase.from(TABLES.reviews).insert(payload)
+  if (error) throw error
+  event.currentTarget.reset()
+  await loadData()
+  toast('Review saved.')
+  render()
+})
+
+const saveComment = safeRun(async event => {
+  event.preventDefault()
+  const form = new FormData(event.currentTarget)
+  const payload = {
+    spot_id: state.currentSpotId,
+    comment_text: String(form.get('comment_text') || '').trim(),
+    parent_comment_id: String(form.get('parent_comment_id') || '').trim() || null
+  }
+  if (!payload.comment_text) {
+    toast('Write something before posting a comment.')
+    return
+  }
+  const { error } = await supabase.from(TABLES.comments).insert(payload)
+  if (error) throw error
+  state.currentReplyParentId = null
+  event.currentTarget.reset()
+  await loadData()
+  toast('Comment posted.')
+  render()
+})
+
+const toggleCommentLike = safeRun(async commentId => {
+  const existing = state.commentLikes.find(like => like.comment_id === commentId && like.user_id === state.user.id)
+  if (existing) {
+    const { error } = await supabase.from(TABLES.commentLikes).delete().eq('id', existing.id)
+    if (error) throw error
+  } else {
+    const { error } = await supabase.from(TABLES.commentLikes).insert({ comment_id: commentId })
+    if (error) throw error
+  }
+  await loadData()
+  render()
+})
+
+const saveCrawl = safeRun(async event => {
+  event.preventDefault()
+  const form = new FormData(event.currentTarget)
+  const selectedIds = form.getAll('spot_ids')
+  if (selectedIds.length < 3 || selectedIds.length > 7) {
+    toast('Pick between 3 and 7 spots for a crawl.')
+    return
+  }
+  const selectedSpots = selectedIds.map(id => state.spots.find(s => s.id === id)).filter(Boolean)
+  const crawlPayload = {
+    name: String(form.get('name') || '').trim(),
+    description: String(form.get('description') || '').trim(),
+    city_name: state.country?.city || 'Local crawl',
+    start_latitude: selectedSpots[0]?.latitude || state.geo?.latitude || DEFAULT_CENTER[0],
+    start_longitude: selectedSpots[0]?.longitude || state.geo?.longitude || DEFAULT_CENTER[1],
+    is_public: true
+  }
+  const { data: crawl, error } = await supabase.from(TABLES.crawls).insert(crawlPayload).select().single()
+  if (error) throw error
+
+  const stopRows = selectedSpots.map((spot, index) => ({
+    crawl_id: crawl.id,
+    spot_id: spot.id,
+    stop_order: index + 1,
+    estimated_walk_minutes: index === 0 ? 0 : walkMinutesBetween(selectedSpots[index - 1], spot)
+  }))
+  const stopInsert = await supabase.from(TABLES.crawlStops).insert(stopRows)
+  if (stopInsert.error) throw stopInsert.error
+
+  event.currentTarget.reset()
+  await loadData()
+  toast('Food crawl mapped.')
+  render()
+})
+
+const cloneCrawl = safeRun(async crawlId => {
+  const crawl = state.crawls.find(c => c.id === crawlId)
+  const stops = crawlStopsFor(crawlId)
+  if (!crawl || !stops.length) return
+  const { data: clone, error } = await supabase.from(TABLES.crawlClones).insert({
+    crawl_id: crawl.id,
+    original_creator_user_id: crawl.user_id,
+    status: 'in_progress',
+    overall_rating: null,
+    notes: '',
+    completed_at: null
+  }).select().single()
+  if (error) throw error
+
+  const cloneStops = stops.map(stop => ({
+    crawl_clone_id: clone.id,
+    spot_id: stop.spot_id,
+    stop_order: stop.stop_order,
+    visited: false,
+    visited_at: null
+  }))
+  const insertStops = await supabase.from(TABLES.crawlCloneStops).insert(cloneStops)
+  if (insertStops.error) throw insertStops.error
+  await loadData()
+  toast('Crawl cloned to your route list.')
+  render()
+})
+
+const markCloneStopVisited = safeRun(async cloneStopId => {
+  const { error } = await supabase.from(TABLES.crawlCloneStops).update({ visited: true, visited_at: new Date().toISOString() }).eq('id', cloneStopId)
+  if (error) throw error
+  await loadData()
+  render()
+})
+
+const completeClone = safeRun(async (cloneId, rating, notes) => {
+  const { error } = await supabase.from(TABLES.crawlClones).update({ status: 'completed', overall_rating: rating, notes, completed_at: new Date().toISOString() }).eq('id', cloneId)
+  if (error) throw error
+  await loadData()
+  toast('Crawl completed.')
+  render()
+})
+
+const saveBucketArea = safeRun(async event => {
+  event.preventDefault()
+  const form = new FormData(event.currentTarget)
+  let coords = state.geo
+  if (!coords || state.geoSource !== 'device') {
+    toast('Trying to get your location...')
+    const freshCoords = await detectLocation(true)
+    if (freshCoords) {
+      coords = freshCoords
+      state.geo = coords
+      state.geoSource = 'device'
+      await fetchCountryAndWeather()
+      render()
+    }
+  }
+  if (!coords) {
+    applyFallbackLocation('Device location blocked. Saving area with fallback city center.')
+    coords = state.geo
+    await fetchCountryAndWeather()
+    render()
+  }
+  const payload = {
+    label: String(form.get('label') || '').trim(),
+    city_name: String(form.get('city_name') || '').trim(),
+    country_name: String(form.get('country_name') || '').trim(),
+    latitude: coords.latitude,
+    longitude: coords.longitude,
+    radius_km: Number(form.get('radius_km') || 5)
+  }
+  const notes = String(form.get('notes') || '').trim()
+  if (!payload.label) {
+    toast('Add a label for this saved area.')
+    return
+  }
+  if (!payload.city_name) payload.city_name = state.country?.city || FALLBACK_LOCATION.city
+  if (!payload.country_name) payload.country_name = state.country?.name || FALLBACK_LOCATION.country
+  const { error } = await supabase.from(TABLES.savedAreas).insert(payload)
+  if (error) throw error
+  if (notes) {
+    await supabase.from(TABLES.bucketList).insert({
+      city_name: payload.city_name,
+      country_name: payload.country_name,
+      latitude: payload.latitude,
+      longitude: payload.longitude,
+      notes
+    })
+  }
+  event.currentTarget.reset()
+  await loadData()
+  toast(state.geoSource === 'device' ? 'Area saved to your bucket list.' : 'Area saved with fallback city coordinates.')
+  render()
+})
+
+function setupRealtime() {
+  try {
+    if (state.initializedRealtime) return
+    state.initializedRealtime = true
+    supabase.channel('bitemap-live')
+      .on('postgres_changes', { event: '*', schema: 'public', table: TABLES.spots }, async () => { await loadData(); render() })
+      .on('postgres_changes', { event: '*', schema: 'public', table: TABLES.reviews }, async () => { await loadData(); render() })
+      .on('postgres_changes', { event: '*', schema: 'public', table: TABLES.crawls }, async () => { await loadData(); render() })
+      .on('postgres_changes', { event: '*', schema: 'public', table: TABLES.crawlStops }, async () => { await loadData(); render() })
+      .on('postgres_changes', { event: '*', schema: 'public', table: TABLES.comments }, async () => { await loadData(); render() })
+      .on('postgres_changes', { event: '*', schema: 'public', table: TABLES.commentLikes }, async () => { await loadData(); render() })
+      .on('postgres_changes', { event: '*', schema: 'public', table: TABLES.savedAreas }, async () => { await loadData(); render() })
+      .subscribe()
+  } catch (error) {
+    console.error('Realtime error:', error?.message)
+  }
 }
 
-function subscribeRealtime() {
-  supabase.channel('wandermap-live')
-    .on('postgres_changes', { event: '*', schema: 'public', table: T_LOGS }, async () => {
-      await loadAppData();
-      if (currentScreen === 'app') renderAppShell();
+function bindEvents() {
+  try {
+    document.getElementById('auth-form')?.addEventListener('submit', handleAuthSubmit)
+    document.getElementById('switch-auth')?.addEventListener('click', () => {
+      if (state.authBusy) return
+      state.authMode = state.authMode === 'signup' ? 'signin' : 'signup'
+      setAuthError('')
+      render()
     })
-    .on('postgres_changes', { event: '*', schema: 'public', table: T_UPVOTES }, async () => {
-      await loadAppData();
-      if (currentScreen === 'app') renderAppShell();
-    })
-    .on('postgres_changes', { event: '*', schema: 'public', table: T_COMMENTS }, async () => {
-      await loadAppData();
-      if (currentScreen === 'app') renderAppShell();
-    })
-    .subscribe();
+    document.getElementById('go-signin')?.addEventListener('click', () => { state.screen = 'auth'; state.authMode = 'signin'; setAuthError(''); render() })
+    document.getElementById('sign-out')?.addEventListener('click', signOut)
+    document.getElementById('spot-form')?.addEventListener('submit', saveSpot)
+    document.getElementById('review-form')?.addEventListener('submit', saveReview)
+    document.getElementById('comment-form')?.addEventListener('submit', saveComment)
+    document.getElementById('crawl-form')?.addEventListener('submit', saveCrawl)
+    document.getElementById('bucket-form')?.addEventListener('submit', saveBucketArea)
+    document.getElementById('refresh-location')?.addEventListener('click', safeRun(async () => {
+      const coords = await detectLocation(true)
+      if (coords) {
+        state.geo = coords
+        state.geoSource = 'device'
+        state.geoError = ''
+      } else {
+        applyFallbackLocation('Location blocked or unavailable. Showing Los Angeles fallback.')
+      }
+      await fetchCountryAndWeather()
+      render()
+      toast(state.geoSource === 'device' ? 'Location refreshed.' : 'Location blocked, using Los Angeles fallback.')
+    }))
+
+    document.querySelectorAll('[data-nav]').forEach(btn => btn.addEventListener('click', () => setNav(btn.dataset.nav)))
+    document.querySelectorAll('.open-spot').forEach(btn => btn.addEventListener('click', () => openSpot(btn.dataset.spotId)))
+    document.querySelectorAll('.open-profile').forEach(btn => btn.addEventListener('click', () => openProfile(btn.dataset.userId)))
+    document.querySelectorAll('.clone-crawl').forEach(btn => btn.addEventListener('click', () => cloneCrawl(btn.dataset.crawlId)))
+    document.querySelectorAll('.mark-stop').forEach(btn => btn.addEventListener('click', () => markCloneStopVisited(btn.dataset.cloneStopId)))
+    document.querySelectorAll('.complete-crawl').forEach(btn => btn.addEventListener('click', () => {
+      const cloneId = btn.dataset.cloneId
+      const rating = Number(document.querySelector(`.complete-rating[data-clone-id="${cloneId}"]`)?.value || 0)
+      const notes = String(document.querySelector(`.complete-notes[data-clone-id="${cloneId}"]`)?.value || '')
+      completeClone(cloneId, rating, notes)
+    }))
+    document.querySelectorAll('.toggle-comment-like').forEach(btn => btn.addEventListener('click', () => toggleCommentLike(btn.dataset.commentId)))
+    document.querySelectorAll('.reply-comment').forEach(btn => btn.addEventListener('click', () => { state.currentReplyParentId = btn.dataset.commentId; render(); setTimeout(() => document.querySelector('#comment-form textarea')?.focus(), 60) }))
+  } catch (error) {
+    console.error('Bind error:', error?.message, error?.stack)
+  }
+}
+
+function setupAuthListener() {
+  if (state.authListenerSet) return
+  state.authListenerSet = true
+
+  supabase.auth.onAuthStateChange(async (_event, session) => {
+    try {
+      if (!state.authInitialized) return
+      if (state.authProcessingSession) return
+      state.authProcessingSession = true
+      await enterAppWithSession(session)
+    } catch (error) {
+      console.error('Auth state error:', error?.message)
+      state.screen = session?.user ? 'app' : 'auth'
+      render()
+    } finally {
+      state.authProcessingSession = false
+      state.authBusy = false
+      state.authMessage = ''
+      if (state.authTimeoutId) {
+        clearTimeout(state.authTimeoutId)
+        state.authTimeoutId = null
+      }
+    }
+  })
 }
 
 async function init() {
   try {
-    await fetchApod();
-    renderLoading();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (user) {
-      currentUser = user;
-      await ensureAppUser(user);
-      await loadAppData();
-      renderAppShell();
-      subscribeRealtime();
+    state.screen = 'loading'
+    render()
+    if (state.loadingTimeoutId) clearTimeout(state.loadingTimeoutId)
+    state.loadingTimeoutId = setTimeout(() => {
+      if (state.screen === 'loading') {
+        applyFallbackLocation('Initial GPS lookup was slow. Showing Los Angeles fallback.')
+        state.screen = 'auth'
+        state.authMode = 'signin'
+        render()
+      }
+    }, 4500)
+
+    setupAuthListener()
+    await fetchNASA()
+    const detected = await detectLocation(false)
+    if (detected) {
+      state.geo = detected
+      state.geoSource = 'device'
     } else {
-      renderSignUp();
-      subscribeRealtime();
+      applyFallbackLocation('Device location unavailable. Showing Los Angeles fallback.')
     }
-  } catch (e) {
-    console.error('init', e);
-    renderSignUp();
+    await fetchCountryAndWeather()
+    const { data: { session } } = await supabase.auth.getSession()
+    state.authInitialized = true
+    await enterAppWithSession(session)
+    setupRealtime()
+    if (state.loadingTimeoutId) clearTimeout(state.loadingTimeoutId)
+    render()
+  } catch (error) {
+    console.error('Init error:', error?.message, error?.stack)
+    state.authInitialized = true
+    applyFallbackLocation('Unable to initialize device location. Showing Los Angeles fallback.')
+    state.screen = 'auth'
+    state.authMode = 'signin'
+    render()
   }
 }
 
-init();
+init()
