@@ -229,56 +229,17 @@ function clampText(value = '', max = 220) {
   return text.length > max ? `${text.slice(0, max).trim()}...` : text
 }
 
+function looksLikeStructuredPayload(text = '') {
+  const value = String(text || '').trim()
+  if (!value) return false
+  if ((value.startsWith('{') && value.endsWith('}')) || (value.startsWith('[') && value.endsWith(']'))) return true
+  return /"cca2"|"cca3"|"capital"|"altSpellings"|"googleMaps"|"timezones"|"currencies"|"languages"|"latlng"|"translations"|"demonyms"/i.test(value)
+}
+
 function cleanBucketNotes(value = '') {
   const text = String(value || '').trim()
   if (!text) return ''
-
-  if ((text.startsWith('{') && text.endsWith('}')) || (text.startsWith('[') && text.endsWith(']'))) {
-    try {
-      const parsed = JSON.parse(text)
-      if (typeof parsed === 'string') return clampText(parsed, 180)
-      if (Array.isArray(parsed)) {
-        return clampText(parsed.map(item => {
-          if (typeof item === 'string') return item
-          if (item && typeof item === 'object') return item.name || item.common || item.official || ''
-          return ''
-        }).filter(Boolean).join(', '), 180)
-      }
-      if (parsed && typeof parsed === 'object') {
-        const preferred = [
-          parsed.notes,
-          parsed.summary,
-          parsed.description,
-          parsed.overview,
-          parsed.city,
-          parsed.name,
-          parsed.common,
-          parsed.official,
-          parsed.country,
-          parsed.country_name
-        ].find(Boolean)
-
-        if (preferred) return clampText(preferred, 180)
-
-        const flattened = Object.values(parsed)
-          .flatMap(value => {
-            if (typeof value === 'string') return [value]
-            if (Array.isArray(value)) return value.filter(item => typeof item === 'string')
-            if (value && typeof value === 'object') {
-              return Object.values(value).filter(item => typeof item === 'string')
-            }
-            return []
-          })
-          .filter(Boolean)
-
-        if (flattened.length) return clampText(flattened.join(' � '), 180)
-      }
-    } catch (error) {
-      console.error('Bucket notes parse error:', error?.message)
-    }
-    return 'Saved destination details.'
-  }
-
+  if (looksLikeStructuredPayload(text)) return ''
   return clampText(text, 180)
 }
 
@@ -323,537 +284,95 @@ async function fetchCountry(code) {
 }
 
 async function searchCities(query) {
-  const url = `${OPEN_METEO_GEOCODE}?name=${encodeURIComponent(query)}&count=8&language=en&format=json`
-  const data = await fetchJson(url)
-  return (data?.results || []).map(item => ({
-    city_name: item.name,
-    country_name: item.country,
-    country_code: item.country_code,
-    latitude: item.latitude,
-    longitude: item.longitude,
-    timezone: item.timezone,
-    admin1: item.admin1 || ''
-  }))
+  const q = String(query || '').trim()
+  if (!q) return []
+  try {
+    const url = `${OPEN_METEO_GEOCODE}?name=${encodeURIComponent(q)}&count=8&language=en&format=json`
+    const data = await fetchJson(url)
+    return (data?.results || []).map(item => ({
+      city_name: item.name,
+      country_name: item.country,
+      country_code: item.country_code,
+      latitude: item.latitude,
+      longitude: item.longitude,
+      admin1: item.admin1 || ''
+    }))
+  } catch (error) {
+    console.error('City search error:', error?.message)
+    return []
+  }
 }
 
-async function fetchWeather(latitude, longitude) {
-  if (latitude == null || longitude == null) return null
-  const params = new URLSearchParams({
-    latitude: String(latitude),
-    longitude: String(longitude),
-    current: 'temperature_2m,weather_code,wind_speed_10m',
-    daily: 'weather_code,temperature_2m_max,temperature_2m_min',
-    timezone: 'auto',
-    forecast_days: '7'
-  })
-  return fetchJson(`${OPEN_METEO_FORECAST}?${params.toString()}`)
-}
-
-function renderAuth() {
-  return `
-    <div class="auth-wrap">
-      <div class="card auth-card stamp-card">
-        <div class="brand-mark"><i class="fa-solid fa-earth-americas"></i></div>
-        <h1 class="title">WanderMap</h1>
-        <p class="subtitle">Track places you loved, cities you want to visit, and short travel notes you actually want to revisit later.</p>
-        <form id="auth-form" class="form-stack" style="margin-top:18px;">
-          <div>
-            <label class="label">Email</label>
-            <input class="input" type="email" name="email" required ${state.authBusy ? 'disabled' : ''}>
-          </div>
-          <div>
-            <label class="label">Password</label>
-            <input class="input" type="password" name="password" required minlength="6" ${state.authBusy ? 'disabled' : ''}>
-          </div>
-          <div class="auth-error">${escapeHtml(state.authError || '')}</div>
-          <button class="btn btn-primary" type="submit" style="width:100%;" ${state.authBusy ? 'disabled' : ''}>${state.authBusy ? (state.authMessage || 'Working...') : state.authMode === 'signup' ? 'Create account' : 'Sign in'}</button>
-        </form>
-        <button class="auth-switch" id="switch-auth" ${state.authBusy ? 'disabled' : ''}>${state.authMode === 'signup' ? 'Already have an account? <strong>Sign in</strong>' : `Don't have an account? <strong>Sign up</strong>`}</button>
-      </div>
-    </div>
-  `
-}
-
-function renderCheckEmail() {
-  return `
-    <div class="auth-wrap">
-      <div class="card auth-card stamp-card">
-        <div class="brand-mark"><i class="fa-solid fa-envelope-open-text"></i></div>
-        <h1 class="title">Check your email</h1>
-        <p class="subtitle">We sent a confirmation link to <strong>${escapeHtml(state.pendingEmail || '')}</strong>. Open it, then return here and sign in.</p>
-        <button class="btn btn-primary" id="go-signin" style="width:100%; margin-top:18px;">Go to sign in</button>
-      </div>
-    </div>
-  `
-}
-
-function renderLoading() {
-  const photo = state.loadingPhoto || {}
-  return `
-    <div class="loading-screen">
-      <div class="card loading-card stamp-card">
-        <div class="loading-media" style="background-image:url('${escapeHtml(photo.image || '')}')">
-          <div class="loading-overlay"></div>
-        </div>
-        <div class="loading-copy">
-          <div class="kicker">Loading your next trip</div>
-          <h1 class="title" style="text-align:left;">${escapeHtml(photo.title || 'Adventure starts here')}</h1>
-          <p class="subtitle" style="text-align:left;">${escapeHtml(photo.explanation || 'Preparing your saved cities and travel logs.')}</p>
-        </div>
-      </div>
-    </div>
-  `
-}
-
-function renderTopbar() {
-  const summary = travelerSummary(state.user?.id)
-  const currentCity = state.selectedCity?.city_name || DEFAULT_CITY.city_name
-  const currentCountry = state.selectedCity?.country_name || DEFAULT_CITY.country_name
-
-  return `
-    <div class="topbar">
-      <div class="topbar-inner">
-        <div class="brand">
-          <div class="brand-icon"><i class="fa-solid fa-earth-americas"></i></div>
-          <div class="brand-copy">
-            <h1>WanderMap</h1>
-            <p>${escapeHtml(currentCity)}, ${escapeHtml(currentCountry)}</p>
-          </div>
-        </div>
-        <div class="top-actions">
-          <div class="top-summary">
-            <span class="meta-chip"><i class="fa-solid fa-stamp"></i> ${escapeHtml(summary.rank.name)}</span>
-            <span class="meta-chip">${summary.totalLogs} logs</span>
-            <span class="meta-chip">${state.bucketList.length} saved cities</span>
-          </div>
-          <button class="btn btn-secondary" id="sign-out">Sign out</button>
-        </div>
-      </div>
-      <div class="nav-tabs">
-        ${[
-          ['home', 'Home'],
-          ['city', 'City'],
-          ['create', 'Create'],
-          ['bucket', 'Bucket'],
-          ['profile', 'Profile']
-        ].map(([tab, label]) => `<button class="nav-tab ${state.nav === tab ? 'active' : ''}" data-nav="${tab}">${label}</button>`).join('')}
-      </div>
-    </div>
-  `
-}
-
-function renderHero() {
-  const trending = topTrendingLogs(3)
-  const summary = travelerSummary(state.user?.id)
-  return `
-    <section class="hero">
-      <div class="page-shell hero-grid">
-        <div class="card hero-main stamp-card">
-          <div class="kicker">Your travel journal</div>
-          <h1 class="hero-title">Capture cities worth returning to.</h1>
-          <p class="hero-copy">Save quick notes, rate memorable experiences, keep a clean bucket list, and revisit city details without clutter.</p>
-          <div class="hero-actions">
-            <button class="btn btn-primary" data-nav="create">Write a log</button>
-            <button class="btn btn-secondary" data-nav="bucket">Open bucket list</button>
-          </div>
-          <div class="mini-stats">
-            <div class="stat-pill"><strong>${summary.totalLogs}</strong><span>Logs</span></div>
-            <div class="stat-pill"><strong>${summary.cityCount}</strong><span>Cities</span></div>
-            <div class="stat-pill"><strong>${summary.upvotesReceived}</strong><span>Upvotes</span></div>
-          </div>
-        </div>
-        <div class="card hero-side stamp-card">
-          <div class="section-title">
-            <div>
-              <h2>Trending logs</h2>
-              <p>Recent public posts travelers are reacting to.</p>
-            </div>
-          </div>
-          <div class="side-stack">
-            ${trending.length ? trending.map(log => `
-              <div class="comment-card">
-                <strong>${escapeHtml(log.title || 'Untitled log')}</strong>
-                <div class="log-city">${escapeHtml(log.city_name || '')}, ${escapeHtml(log.country_name || '')}</div>
-                <p class="log-notes">${escapeHtml(clampText(log.notes || '', 120))}</p>
-              </div>
-            `).join('') : `<div class="empty-state">No public logs yet. Be the first to add one.</div>`}
-          </div>
-        </div>
-      </div>
-    </section>
-  `
-}
-
-function renderHome() {
-  const logs = topTrendingLogs(12)
-  return `
-    <div>
-      ${renderHero()}
-      <section class="section">
-        <div class="page-shell">
-          <div class="section-title">
-            <div>
-              <h2>Recent travel logs</h2>
-              <p>Short city stories from the community.</p>
-            </div>
-          </div>
-          <div class="log-list">
-            ${logs.length ? logs.map(renderLogCard).join('') : `<div class="card log-card empty-state">No logs yet. Add the first one.</div>`}
-          </div>
-        </div>
-      </section>
-    </div>
-  `
-}
-
-function renderWeatherSummary() {
-  const weather = state.selectedWeather
-  if (!weather?.current) return `<div class="empty-state">Weather data is not available right now.</div>`
-  return `
-    <div class="meta-row">
-      <span class="meta-chip">${Math.round(weather.current.temperature_2m)} degrees</span>
-      <span class="meta-chip">${escapeHtml(weatherLabel(weather.current.weather_code))}</span>
-      <span class="meta-chip">Wind ${Math.round(weather.current.wind_speed_10m)} km/h</span>
-    </div>
-  `
-}
-
-function renderForecast() {
-  const daily = state.selectedWeather?.daily
-  if (!daily?.time?.length) return `<div class="empty-state">Forecast unavailable.</div>`
-  return daily.time.map((date, index) => `
-    <div class="meta-row" style="justify-content:space-between;">
-      <strong>${escapeHtml(fmtDate(date))}</strong>
-      <span>${Math.round(daily.temperature_2m_max[index])} / ${Math.round(daily.temperature_2m_min[index])}</span>
-      <span>${escapeHtml(weatherLabel(daily.weather_code[index]))}</span>
-    </div>
-  `).join('')
-}
-
-function renderCity() {
-  const city = state.selectedCity || DEFAULT_CITY
-  const country = state.selectedCountry
-  const cityLogs = logsForCity(city.city_name, city.country_code)
-  return `
-    <div class="page-shell section">
-      <div class="grid city-layout">
-        <div class="card city-search-card stamp-card">
-          <div class="section-title">
-            <div>
-              <h2>Search a city</h2>
-              <p>Find weather and save places you want to explore.</p>
-            </div>
-          </div>
-          <div class="city-search-row">
-            <input class="input" id="city-query" placeholder="Search Lisbon, Tokyo, Mexico City..." value="${escapeHtml(state.cityQuery)}">
-            <button class="btn btn-primary" id="search-city">Search</button>
-          </div>
-          <div class="city-results">
-            ${state.cityResults.length ? state.cityResults.map(result => `
-              <button class="city-result" data-city="${escapeHtml(JSON.stringify(result))}">
-                <strong>${escapeHtml(result.city_name)}</strong>
-                <div class="log-city">${escapeHtml([result.admin1, result.country_name].filter(Boolean).join(', '))}</div>
-              </button>
-            `).join('') : `<div class="empty-state">Search for a city to switch the dashboard.</div>`}
-          </div>
-        </div>
-        <div class="card city-banner stamp-card">
-          <div class="parallax-layer parallax-grid"></div>
-          <div class="parallax-layer parallax-compass"><i class="fa-regular fa-compass"></i></div>
-          <div class="city-banner-content">
-            <div class="kicker">${escapeHtml(country?.flag || city.country_code || '')}</div>
-            <h1 class="hero-title">${escapeHtml(city.city_name)}</h1>
-            <p class="hero-copy">${escapeHtml(city.country_name)} � Population ${escapeHtml(country?.population?.toLocaleString?.() || 'Unknown')} � ${escapeHtml(country?.currencies ? Object.keys(country.currencies).join(', ') : 'Currency unknown')} � ${escapeHtml(country?.languages ? Object.values(country.languages).join(', ') : 'Language unknown')}</p>
-            ${renderWeatherSummary()}
-          </div>
-        </div>
-      </div>
-
-      <div class="grid feed-grid" style="margin-top:18px;">
-        <div class="side-stack">
-          <div class="card stats-card stamp-card">
-            <div class="section-title">
-              <div>
-                <h2>7 day forecast</h2>
-                <p>Open-Meteo daily outlook.</p>
-              </div>
-            </div>
-            ${renderForecast()}
-          </div>
-
-          <div class="card stats-card stamp-card">
-            <div class="section-title">
-              <div>
-                <h2>Logs in this city</h2>
-                <p>Public entries for ${escapeHtml(city.city_name)}.</p>
-              </div>
-            </div>
-            <div class="log-list">
-              ${cityLogs.length ? cityLogs.map(renderLogCard).join('') : `<div class="empty-state">No city logs yet.</div>`}
-            </div>
-          </div>
-        </div>
-
-        <div class="side-stack">
-          <div class="card bucket-card stamp-card">
-            <div class="section-title">
-              <div>
-                <h2>Quick facts</h2>
-                <p>Helpful context for your next visit.</p>
-              </div>
-            </div>
-            <div class="meta-row">
-              <span class="meta-chip">Capital: ${escapeHtml((country?.capital || ['Unknown'])[0])}</span>
-              <span class="meta-chip">Region: ${escapeHtml(country?.region || 'Unknown')}</span>
-              <span class="meta-chip">Timezone: ${escapeHtml(city.timezone || 'Unknown')}</span>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  `
-}
-
-function renderCreate() {
-  const city = state.selectedCity || DEFAULT_CITY
-  return `
-    <div class="page-shell section">
-      <div class="card form-card stamp-card">
-        <div class="section-title">
-          <div>
-            <h2>Create a travel log</h2>
-            <p>Journal a city experience with rating, date, and tags.</p>
-          </div>
-        </div>
-        <form id="log-form" class="form-stack">
-          <div>
-            <label class="label">Title</label>
-            <input class="input" name="title" required placeholder="Sunset tram ride and hidden cafe">
-          </div>
-          <div class="two-col">
-            <div>
-              <label class="label">City</label>
-              <input class="input" name="city_name" value="${escapeHtml(city.city_name)}" required>
-            </div>
-            <div>
-              <label class="label">Country</label>
-              <input class="input" name="country_name" value="${escapeHtml(city.country_name)}" required>
-            </div>
-          </div>
-          <div class="two-col">
-            <div>
-              <label class="label">Country code</label>
-              <input class="input" name="country_code" value="${escapeHtml(city.country_code)}" required>
-            </div>
-            <div>
-              <label class="label">Visit date</label>
-              <input class="input" type="date" name="visit_date">
-            </div>
-          </div>
-          <div class="two-col">
-            <div>
-              <label class="label">Rating</label>
-              <select class="select" name="rating">
-                ${[1, 2, 3, 4, 5].map(value => `<option value="${value}">${value}</option>`).join('')}
-              </select>
-            </div>
-            <div>
-              <label class="label">Tags</label>
-              <div class="tag-row">
-                ${TAGS.map(tag => `<label class="tag"><input type="checkbox" name="tags" value="${tag}" style="margin-right:8px;"> ${tag}</label>`).join('')}
-              </div>
-            </div>
-          </div>
-          <div>
-            <label class="label">Notes</label>
-            <textarea class="textarea" name="notes" placeholder="What stood out, where you went, what you would recommend, and how the city felt."></textarea>
-          </div>
-          <button class="btn btn-primary" type="submit">Publish log</button>
-        </form>
-      </div>
-    </div>
-  `
-}
-
-function renderBucket() {
-  return `
-    <div class="page-shell section">
-      <div class="section-title">
-        <div>
-          <h2>Bucket list</h2>
-          <p>Saved cities you want to explore next.</p>
-        </div>
-      </div>
-      <div class="side-stack">
-        ${state.bucketList.length ? state.bucketList.map(item => `
-          <div class="card bucket-card stamp-card">
-            <div class="section-title">
-              <div>
-                <div class="kicker">${escapeHtml(item.country_code || '')}</div>
-                <h2 style="font-size:1.4rem;">${escapeHtml(item.city_name || 'Saved city')}</h2>
-              </div>
-            </div>
-            <p class="hero-copy">${escapeHtml(cleanBucketNotes(item.notes) || defaultBucketNote(item))}</p>
-            <div class="meta-row">
-              <span class="meta-chip">Saved ${escapeHtml(fmtDate(item.created_at))}</span>
-              ${item.latitude != null && item.longitude != null ? `<span class="meta-chip">${Number(item.latitude).toFixed(2)}, ${Number(item.longitude).toFixed(2)}</span>` : ''}
-            </div>
-          </div>
-        `).join('') : `<div class="card bucket-card empty-state">No saved cities yet.</div>`}
-      </div>
-    </div>
-  `
-}
-
-function renderProfile() {
-  const summary = travelerSummary(state.user?.id)
-  const activeTravelers = mostActiveTravelers(6)
-  const exploredCities = mostExploredCities(6)
-  return `
-    <div class="page-shell section">
-      <div class="grid profile-grid">
-        <div class="card profile-card stamp-card">
-          <div class="kicker">Traveler profile</div>
-          <h1 class="hero-title" style="font-size:2.4rem;">${escapeHtml(state.appUser?.display_name || state.user?.email?.split('@')[0] || 'Traveler')}</h1>
-          <p class="hero-copy">${escapeHtml(state.user?.email || '')}</p>
-          <div class="rank-badge" style="margin-top:16px;">
-            <i class="${summary.rank.icon}"></i>
-            <span>${escapeHtml(summary.rank.name)}</span>
-          </div>
-          <div class="mini-stats">
-            <div class="stat-pill"><strong>${summary.totalLogs}</strong><span>Logs</span></div>
-            <div class="stat-pill"><strong>${summary.cityCount}</strong><span>Cities</span></div>
-            <div class="stat-pill"><strong>${summary.upvotesReceived}</strong><span>Upvotes</span></div>
-          </div>
-        </div>
-        <div class="side-stack">
-          <div class="card stats-card stamp-card">
-            <div class="section-title">
-              <div>
-                <h2>Most explored cities</h2>
-                <p>Where the community logs the most adventures.</p>
-              </div>
-            </div>
-            <div class="side-stack">
-              ${exploredCities.length ? exploredCities.map(city => `
-                <div class="comment-card">
-                  <strong>${escapeHtml(city.city_name)}</strong>
-                  <div class="log-city">${escapeHtml(city.country_name)}</div>
-                  <div class="meta-row"><span class="meta-chip">${city.count} logs</span></div>
-                </div>
-              `).join('') : `<div class="empty-state">No city stats yet.</div>`}
-            </div>
-          </div>
-          <div class="card stats-card stamp-card">
-            <div class="section-title">
-              <div>
-                <h2>Most active travelers</h2>
-                <p>Leaderboard by logs and upvotes.</p>
-              </div>
-            </div>
-            <div class="side-stack">
-              ${activeTravelers.length ? activeTravelers.map(entry => `
-                <div class="comment-card">
-                  <strong>${escapeHtml(entry.profile?.display_name || 'Traveler')}</strong>
-                  <div class="meta-row">
-                    <span class="meta-chip">${entry.totalLogs} logs</span>
-                    <span class="meta-chip">${entry.upvotesReceived} upvotes</span>
-                  </div>
-                </div>
-              `).join('') : `<div class="empty-state">No traveler stats yet.</div>`}
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  `
-}
-
-function renderLogCard(log) {
-  const profile = profileFor(log.user_id)
-  const comments = commentsForLog(log.id)
-  const upvotes = upvoteCountForLog(log.id)
-  return `
-    <div class="card log-card stamp-card">
-      <div class="log-head">
-        <div>
-          <strong>${escapeHtml(log.title || 'Untitled log')}</strong>
-          <div class="log-city">${escapeHtml(log.city_name || '')}, ${escapeHtml(log.country_name || '')}</div>
-          <div class="meta-row">
-            <span class="meta-chip">By ${escapeHtml(profile?.display_name || 'Traveler')}</span>
-            <span class="meta-chip">${escapeHtml(fmtDateTime(log.created_at))}</span>
-            <span class="meta-chip">${log.rating || 0}/5</span>
-          </div>
-        </div>
-        <div class="meta-row">
-          <button class="btn btn-secondary toggle-upvote" data-log-id="${log.id}">${hasUpvoted(log.id) ? 'Upvoted' : 'Upvote'}</button>
-        </div>
-      </div>
-      <p class="log-notes">${escapeHtml(clampText(log.notes || '', 280))}</p>
-      <div class="tag-row">
-        ${(Array.isArray(log.tags) ? log.tags : []).map(tag => `<span class="tag">${escapeHtml(tag)}</span>`).join('')}
-      </div>
-      <div class="meta-row">
-        <span class="meta-chip">${upvotes} upvotes</span>
-        <span class="meta-chip">${comments.length} comments</span>
-      </div>
-      <div class="comment-thread" style="margin-top:14px;">
-        ${comments.slice(0, 3).map(comment => `
-          <div class="comment-card">
-            <strong>${escapeHtml(comment.profile?.display_name || 'Traveler')}</strong>
-            <p class="hero-copy">${escapeHtml(comment.comment_text || '')}</p>
-          </div>
-        `).join('')}
-      </div>
-      <form class="form-stack comment-form" data-log-id="${log.id}" style="margin-top:14px;">
-        <div>
-          <label class="label">Comment</label>
-          <textarea class="textarea" name="comment_text" placeholder="Add a quick reaction or recommendation."></textarea>
-        </div>
-        <button class="btn btn-secondary" type="submit">Post comment</button>
-      </form>
-    </div>
-  `
-}
-
-function renderApp() {
-  let body = ''
-  if (state.nav === 'home') body = renderHome()
-  if (state.nav === 'city') body = renderCity()
-  if (state.nav === 'create') body = renderCreate()
-  if (state.nav === 'bucket') body = renderBucket()
-  if (state.nav === 'profile') body = renderProfile()
-
-  return `
-    ${renderTopbar()}
-    ${state.notice ? `<div class="page-shell" style="padding-top:14px;"><div class="card" style="padding:14px 18px; border-radius:18px; background:rgba(255,127,110,0.14); border-color:rgba(255,127,110,0.25);">${escapeHtml(state.notice)}</div></div>` : ''}
-    ${body}
-    <div class="footer-space"></div>
-  `
-}
-
-function render() {
-  if (state.screen === 'loading') app.innerHTML = renderLoading()
-  else if (state.screen === 'auth') app.innerHTML = renderAuth()
-  else if (state.screen === 'check-email') app.innerHTML = renderCheckEmail()
-  else app.innerHTML = renderApp()
-  bindEvents()
+async function fetchWeather(city) {
+  if (!city?.latitude || !city?.longitude) return null
+  try {
+    const url = `${OPEN_METEO_FORECAST}?latitude=${encodeURIComponent(city.latitude)}&longitude=${encodeURIComponent(city.longitude)}&current=temperature_2m,weather_code,wind_speed_10m&daily=temperature_2m_max,temperature_2m_min&timezone=auto`
+    const data = await fetchJson(url)
+    return {
+      currentTemp: data?.current?.temperature_2m,
+      weatherCode: data?.current?.weather_code,
+      wind: data?.current?.wind_speed_10m,
+      high: data?.daily?.temperature_2m_max?.[0],
+      low: data?.daily?.temperature_2m_min?.[0]
+    }
+  } catch (error) {
+    console.error('Weather fetch error:', error?.message)
+    return null
+  }
 }
 
 async function ensureAppUser(user) {
   if (!user?.id) return null
-  const { data: existing } = await supabase.from(TABLES.appUsers).select('*').eq('user_id', user.id).maybeSingle()
+
+  const { data: existing, error: existingError } = await supabase
+    .from(TABLES.appUsers)
+    .select('*')
+    .eq('user_id', user.id)
+    .maybeSingle()
+
+  if (existingError && !/no rows returned|pgrst116/i.test(String(existingError.message || ''))) {
+    throw existingError
+  }
+
   if (existing) {
     state.appUser = existing
     return existing
   }
+
   const payload = {
     user_id: user.id,
     email: user.email,
-    display_name: user.email?.split('@')[0] || 'Traveler'
+    display_name: user.email?.split('@')[0] || 'Traveler',
+    home_city: DEFAULT_CITY.city_name,
+    favorite_tag: 'culture'
   }
-  const { data, error } = await supabase.from(TABLES.appUsers).insert(payload).select().single()
-  if (error) throw error
+
+  const { data, error } = await supabase
+    .from(TABLES.appUsers)
+    .insert(payload)
+    .select()
+    .single()
+
+  if (error) {
+    const { data: retryExisting } = await supabase
+      .from(TABLES.appUsers)
+      .select('*')
+      .eq('user_id', user.id)
+      .maybeSingle()
+
+    if (retryExisting) {
+      state.appUser = retryExisting
+      return retryExisting
+    }
+
+    if (/row-level security|permission denied/i.test(String(error.message || ''))) {
+      state.appUser = payload
+      return payload
+    }
+
+    throw error
+  }
+
   state.appUser = data
   return data
 }
@@ -880,29 +399,477 @@ async function loadData() {
   state.profiles = profilesRes.data || []
 }
 
-async function refreshSelectedCityData() {
-  const city = state.selectedCity || DEFAULT_CITY
-  state.selectedCountry = await fetchCountry(city.country_code)
-  state.selectedWeather = await fetchWeather(city.latitude, city.longitude)
+function renderAuth() {
+  return `
+    <div class="auth-wrap">
+      <div class="card stamp-card auth-card">
+        <div class="brand-mark"><i class="fa-solid fa-earth-europe"></i></div>
+        <h1 class="title">WanderMap</h1>
+        <p class="subtitle">Track city memories, save future destinations, and share quick travel stories with a clean personal explorer dashboard.</p>
+        <form id="auth-form" class="form-stack" style="margin-top:18px;">
+          <div>
+            <label class="label">Email</label>
+            <input class="input" type="email" name="email" required ${state.authBusy ? 'disabled' : ''}>
+          </div>
+          <div>
+            <label class="label">Password</label>
+            <input class="input" type="password" name="password" required minlength="6" ${state.authBusy ? 'disabled' : ''}>
+          </div>
+          <div class="auth-error">${escapeHtml(state.authError || '')}</div>
+          <button class="btn btn-primary" type="submit" style="width:100%;">${state.authBusy ? escapeHtml(state.authMessage || 'Working...') : state.authMode === 'signup' ? 'Create account' : 'Sign in'}</button>
+        </form>
+        <button class="auth-switch" id="switch-auth">${state.authMode === 'signup' ? 'Already have an account? <strong>Sign in</strong>' : `Don't have an account? <strong>Sign up</strong>`}</button>
+      </div>
+    </div>
+  `
 }
 
-async function enterAppWithSession(session) {
-  state.session = session || null
-  state.user = session?.user || null
+function renderLoading() {
+  return `
+    <div class="loading-screen">
+      <div class="card stamp-card loading-card">
+        <div class="loading-media" style="background-image:url('${escapeHtml(state.loadingPhoto?.image || '')}')">
+          <div class="loading-overlay"></div>
+        </div>
+        <div class="loading-copy">
+          <div class="kicker">Daily inspiration</div>
+          <h1 class="title" style="text-align:left;">${escapeHtml(state.loadingPhoto?.title || 'Adventure starts here')}</h1>
+          <p class="subtitle" style="text-align:left;">${escapeHtml(state.loadingPhoto?.explanation || 'Loading your city explorer...')}</p>
+        </div>
+      </div>
+    </div>
+  `
+}
 
-  if (!state.user) {
-    state.appUser = null
-    state.screen = 'auth'
-    state.nav = 'home'
-    render()
+function renderTopbar() {
+  const mySummary = travelerSummary(state.user?.id)
+  return `
+    <div class="topbar">
+      <div class="topbar-inner">
+        <div class="brand">
+          <div class="brand-icon"><i class="fa-solid fa-compass"></i></div>
+          <div class="brand-copy">
+            <h1>WanderMap</h1>
+            <p>Track city stories, save future destinations, and revisit where you want to go next.</p>
+          </div>
+        </div>
+        <div class="top-actions">
+          <div class="top-summary">
+            <span class="meta-chip">${mySummary.totalLogs} logs</span>
+            <span class="meta-chip">${state.bucketList.length} saved cities</span>
+          </div>
+          <button class="btn btn-secondary" id="sign-out">Sign out</button>
+        </div>
+      </div>
+      <div class="nav-tabs">
+        ${[
+          ['home', 'Home'],
+          ['discover', 'Discover'],
+          ['bucket', 'Bucket List'],
+          ['profile', 'Profile'],
+          ['new-log', 'New Log']
+        ].map(([key, label]) => `<button class="nav-tab ${state.nav === key ? 'active' : ''}" data-nav="${key}">${label}</button>`).join('')}
+      </div>
+    </div>
+  `
+}
+
+function renderHome() {
+  const trending = topTrendingLogs(6)
+  const activeTravelers = mostActiveTravelers(5)
+  return `
+    <div class="page-shell">
+      <section class="hero">
+        <div class="hero-grid">
+          <div class="card stamp-card hero-main">
+            <div class="kicker">City stories</div>
+            <h1 class="hero-title">Keep your travel memories and future trip ideas in one clean place.</h1>
+            <p class="hero-copy">Search a city, log what stood out, save destinations for later, and browse what other travelers are sharing right now.</p>
+            <div class="hero-actions">
+              <button class="btn btn-primary" data-nav="discover">Explore cities</button>
+              <button class="btn btn-secondary" data-nav="new-log">Add a log</button>
+            </div>
+          </div>
+          <div class="card stamp-card hero-side">
+            <div class="kicker">Your progress</div>
+            <div class="mini-stats">
+              <div class="stat-pill"><strong>${travelerSummary(state.user?.id).cityCount}</strong><span>Cities logged</span></div>
+              <div class="stat-pill"><strong>${travelerSummary(state.user?.id).upvotesReceived}</strong><span>Upvotes earned</span></div>
+              <div class="stat-pill"><strong>${travelerSummary(state.user?.id).rank.name}</strong><span>Traveler rank</span></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-title">
+          <div>
+            <h2>Trending logs</h2>
+            <p>Popular recent stories from the community.</p>
+          </div>
+        </div>
+        <div class="log-list">
+          ${trending.length ? trending.map(renderLogCard).join('') : `<div class="card log-card">No public logs yet.</div>`}
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-title">
+          <div>
+            <h2>Active travelers</h2>
+            <p>People sharing the most city stories.</p>
+          </div>
+        </div>
+        <div class="log-list">
+          ${activeTravelers.map(item => `
+            <div class="card log-card">
+              <div class="log-head">
+                <div>
+                  <h3>${escapeHtml(item.profile?.display_name || 'Traveler')}</h3>
+                  <div class="log-city">${escapeHtml(item.rank.name)} � ${item.cityCount} cities</div>
+                </div>
+                <button class="btn btn-secondary open-profile" data-user-id="${item.profile?.user_id || ''}">Open profile</button>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      </section>
+    </div>
+  `
+}
+
+function renderLogCard(log) {
+  const profile = profileFor(log.user_id)
+  return `
+    <div class="card log-card stamp-card">
+      <div class="log-head">
+        <div>
+          <h3>${escapeHtml(log.title || 'Untitled log')}</h3>
+          <div class="log-city">${escapeHtml(log.city_name || 'Unknown city')}, ${escapeHtml(log.country_name || '')} � by ${escapeHtml(profile?.display_name || 'Traveler')}</div>
+        </div>
+        <div class="meta-chip">${fmtDate(log.created_at)}</div>
+      </div>
+      <p class="log-notes">${escapeHtml(clampText(log.notes || '', 280))}</p>
+      <div class="tag-row">
+        ${(Array.isArray(log.tags) ? log.tags : []).map(tag => `<span class="tag">${escapeHtml(tag)}</span>`).join('')}
+      </div>
+      <div class="meta-row">
+        <span class="meta-chip">${upvoteCountForLog(log.id)} upvotes</span>
+        <span class="meta-chip">${commentsForLog(log.id).length} comments</span>
+        <span class="meta-chip">${Number(log.rating || 0).toFixed(1)} / 5</span>
+      </div>
+      <div class="hero-actions">
+        <button class="btn btn-primary open-log" data-log-id="${log.id}">Open</button>
+        <button class="btn btn-secondary toggle-upvote" data-log-id="${log.id}">${hasUpvoted(log.id) ? 'Upvoted' : 'Upvote'}</button>
+      </div>
+    </div>
+  `
+}
+
+function renderDiscover() {
+  return `
+    <div class="page-shell section">
+      <div class="grid feed-grid">
+        <div class="side-stack">
+          <div class="card stamp-card city-search-card">
+            <div class="section-title">
+              <div>
+                <h2>Search a city</h2>
+                <p>Pick a place to view weather, country details, and recent public logs.</p>
+              </div>
+            </div>
+            <div class="city-search-row">
+              <input class="input" id="city-query" placeholder="Lisbon, Tokyo, Mexico City..." value="${escapeHtml(state.cityQuery)}">
+              <button class="btn btn-primary" id="search-city-btn">Search</button>
+            </div>
+            <div class="city-results">
+              ${state.cityResults.map((city, index) => `
+                <button class="city-result" data-city-index="${index}">
+                  <strong>${escapeHtml(city.city_name)}</strong>
+                  <div class="log-city">${escapeHtml(city.admin1 ? `${city.admin1}, ` : '')}${escapeHtml(city.country_name || '')}</div>
+                </button>
+              `).join('') || `<div class="meta-chip">Search for a city to get started.</div>`}
+            </div>
+          </div>
+
+          ${state.selectedCity ? renderSelectedCity() : ''}
+        </div>
+
+        <div class="side-stack">
+          <div class="card stamp-card stats-card">
+            <div class="section-title">
+              <div>
+                <h2>Most explored cities</h2>
+                <p>Based on public logs.</p>
+              </div>
+            </div>
+            <div class="log-list">
+              ${mostExploredCities().map(city => `
+                <div class="card log-card">
+                  <strong>${escapeHtml(city.city_name)}</strong>
+                  <div class="log-city">${escapeHtml(city.country_name || '')}</div>
+                  <div class="meta-row"><span class="meta-chip">${city.count} logs</span></div>
+                </div>
+              `).join('') || `<div class="meta-chip">No city data yet.</div>`}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `
+}
+
+function renderSelectedCity() {
+  const city = state.selectedCity
+  const country = state.selectedCountry
+  const weather = state.selectedWeather
+  const cityLogs = logsForCity(city.city_name, city.country_code)
+  return `
+    <div class="card stamp-card city-search-card">
+      <div class="section-title">
+        <div>
+          <h2>${escapeHtml(city.city_name)}, ${escapeHtml(city.country_name || '')}</h2>
+          <p>Current city details and public traveler logs.</p>
+        </div>
+      </div>
+      <div class="meta-row">
+        ${weather ? `<span class="meta-chip">${weatherLabel(weather.weatherCode)} � ${Math.round(weather.currentTemp)}�</span>` : ''}
+        ${weather ? `<span class="meta-chip">High ${Math.round(weather.high)}� / Low ${Math.round(weather.low)}�</span>` : ''}
+        ${country?.capital?.[0] ? `<span class="meta-chip">Capital ${escapeHtml(country.capital[0])}</span>` : ''}
+        ${country?.region ? `<span class="meta-chip">${escapeHtml(country.region)}</span>` : ''}
+      </div>
+      <div class="log-list" style="margin-top:16px;">
+        ${cityLogs.length ? cityLogs.map(renderLogCard).join('') : `<div class="card log-card">No public logs for this city yet.</div>`}
+      </div>
+    </div>
+  `
+}
+
+function renderBucketList() {
+  return `
+    <div class="page-shell section">
+      <div class="section-title">
+        <div>
+          <h2>Bucket list</h2>
+          <p>Saved cities you want to explore next.</p>
+        </div>
+      </div>
+      <div class="log-list">
+        ${state.bucketList.length ? state.bucketList.map(item => {
+          const note = cleanBucketNotes(item.notes)
+          return `
+            <div class="card bucket-card stamp-card">
+              <div class="kicker">${escapeHtml(item.country_code || '')}</div>
+              <h3>${escapeHtml(item.city_name || 'Saved city')}</h3>
+              ${note ? `<p class="log-notes">${escapeHtml(note)}</p>` : ''}
+              <div class="meta-row">
+                <span class="meta-chip">${escapeHtml(item.country_name || 'Unknown country')}</span>
+                <span class="meta-chip">Saved ${fmtDate(item.created_at)}</span>
+              </div>
+            </div>
+          `
+        }).join('') : `<div class="card bucket-card">No saved cities yet.</div>`}
+      </div>
+    </div>
+  `
+}
+
+function renderProfile() {
+  const summary = travelerSummary(state.currentProfileUserId || state.user?.id)
+  const profile = profileFor(state.currentProfileUserId || state.user?.id) || state.appUser
+  return `
+    <div class="page-shell section">
+      <div class="grid feed-grid">
+        <div class="card stamp-card profile-card">
+          <div class="kicker">Traveler profile</div>
+          <h1 class="hero-title">${escapeHtml(profile?.display_name || 'Traveler')}</h1>
+          <p class="hero-copy">${escapeHtml(profile?.email || state.user?.email || '')}</p>
+          <div class="mini-stats">
+            <div class="stat-pill"><strong>${summary.totalLogs}</strong><span>Logs</span></div>
+            <div class="stat-pill"><strong>${summary.cityCount}</strong><span>Cities</span></div>
+            <div class="stat-pill"><strong>${summary.upvotesReceived}</strong><span>Upvotes</span></div>
+          </div>
+        </div>
+        <div class="card stamp-card stats-card">
+          <div class="section-title">
+            <div>
+              <h2>${escapeHtml(summary.rank.name)}</h2>
+              <p>Current traveler rank based on public activity.</p>
+            </div>
+          </div>
+          <div class="log-list">
+            ${summary.userLogs.slice(0, 5).map(renderLogCard).join('') || `<div class="card log-card">No logs yet.</div>`}
+          </div>
+        </div>
+      </div>
+    </div>
+  `
+}
+
+function renderNewLog() {
+  const city = state.selectedCity || DEFAULT_CITY
+  return `
+    <div class="page-shell section">
+      <div class="grid feed-grid">
+        <div class="card stamp-card form-card">
+          <div class="section-title">
+            <div>
+              <h2>Add a travel log</h2>
+              <p>Share a short memory, recommendation, or tip for a city.</p>
+            </div>
+          </div>
+          <form id="log-form" class="form-stack">
+            <div>
+              <label class="label">Title</label>
+              <input class="input" name="title" required placeholder="Sunset tram ride and pastel de nata stop">
+            </div>
+            <div>
+              <label class="label">City</label>
+              <input class="input" name="city_name" required value="${escapeHtml(city.city_name || '')}">
+            </div>
+            <div>
+              <label class="label">Country</label>
+              <input class="input" name="country_name" required value="${escapeHtml(city.country_name || '')}">
+            </div>
+            <div>
+              <label class="label">Country code</label>
+              <input class="input" name="country_code" required value="${escapeHtml(city.country_code || '')}">
+            </div>
+            <div>
+              <label class="label">Notes</label>
+              <textarea class="textarea" name="notes" required placeholder="What stood out, what to do, and what you'd recommend to someone else."></textarea>
+            </div>
+            <div>
+              <label class="label">Tags</label>
+              <div class="tag-row">
+                ${TAGS.map(tag => `<label class="tag"><input type="checkbox" name="tags" value="${tag}" style="margin-right:8px;">${tag}</label>`).join('')}
+              </div>
+            </div>
+            <div>
+              <label class="label">Rating</label>
+              <select class="select" name="rating">${[1,2,3,4,5].map(n => `<option value="${n}">${n}</option>`).join('')}</select>
+            </div>
+            <button class="btn btn-primary" type="submit">Save log</button>
+          </form>
+        </div>
+        <div class="side-stack">
+          <div class="card stamp-card bucket-card">
+            <div class="section-title">
+              <div>
+                <h2>Save current city</h2>
+                <p>Add the selected city to your bucket list.</p>
+              </div>
+            </div>
+            <form id="bucket-form" class="form-stack">
+              <div>
+                <label class="label">City</label>
+                <input class="input" name="city_name" required value="${escapeHtml(city.city_name || '')}">
+              </div>
+              <div>
+                <label class="label">Country</label>
+                <input class="input" name="country_name" required value="${escapeHtml(city.country_name || '')}">
+              </div>
+              <div>
+                <label class="label">Country code</label>
+                <input class="input" name="country_code" required value="${escapeHtml(city.country_code || '')}">
+              </div>
+              <div>
+                <label class="label">Note</label>
+                <textarea class="textarea" name="notes" placeholder="Why do you want to visit this city?"></textarea>
+              </div>
+              <button class="btn btn-secondary" type="submit">Save to bucket list</button>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+  `
+}
+
+function renderLogDetail() {
+  const log = state.logs.find(item => item.id === state.currentLogId)
+  if (!log) return `<div class="page-shell section"><div class="card log-card">Log not found.</div></div>`
+  const profile = profileFor(log.user_id)
+  const comments = commentsForLog(log.id)
+  return `
+    <div class="page-shell section">
+      <div class="card stamp-card log-card">
+        <div class="log-head">
+          <div>
+            <h2>${escapeHtml(log.title || 'Untitled log')}</h2>
+            <div class="log-city">${escapeHtml(log.city_name || '')}, ${escapeHtml(log.country_name || '')} � ${escapeHtml(profile?.display_name || 'Traveler')}</div>
+          </div>
+          <div class="meta-chip">${fmtDateTime(log.created_at)}</div>
+        </div>
+        <p class="log-notes" style="-webkit-line-clamp:unset; display:block;">${escapeHtml(log.notes || '')}</p>
+        <div class="tag-row">${(Array.isArray(log.tags) ? log.tags : []).map(tag => `<span class="tag">${escapeHtml(tag)}</span>`).join('')}</div>
+        <div class="meta-row">
+          <span class="meta-chip">${upvoteCountForLog(log.id)} upvotes</span>
+          <span class="meta-chip">${Number(log.rating || 0).toFixed(1)} / 5</span>
+        </div>
+        <div class="hero-actions">
+          <button class="btn btn-primary toggle-upvote" data-log-id="${log.id}">${hasUpvoted(log.id) ? 'Upvoted' : 'Upvote'}</button>
+        </div>
+      </div>
+
+      <div class="card stamp-card form-card" style="margin-top:16px;">
+        <div class="section-title">
+          <div>
+            <h2>Comments</h2>
+            <p>Join the conversation.</p>
+          </div>
+        </div>
+        <form id="comment-form" class="form-stack">
+          <div>
+            <label class="label">Comment</label>
+            <textarea class="textarea" name="comment_text" required placeholder="Add a helpful comment or question."></textarea>
+          </div>
+          <button class="btn btn-primary" type="submit">Post comment</button>
+        </form>
+        <div class="log-list" style="margin-top:16px;">
+          ${comments.length ? comments.map(comment => `
+            <div class="card log-card">
+              <strong>${escapeHtml(comment.profile?.display_name || 'Traveler')}</strong>
+              <div class="log-city">${fmtDateTime(comment.created_at)}</div>
+              <p class="log-notes" style="-webkit-line-clamp:unset; display:block;">${escapeHtml(comment.comment_text || '')}</p>
+            </div>
+          `).join('') : `<div class="card log-card">No comments yet.</div>`}
+        </div>
+      </div>
+    </div>
+  `
+}
+
+function renderApp() {
+  let body = ''
+  if (state.nav === 'home') body = renderHome()
+  if (state.nav === 'discover') body = renderDiscover()
+  if (state.nav === 'bucket') body = renderBucketList()
+  if (state.nav === 'profile') body = renderProfile()
+  if (state.nav === 'new-log') body = renderNewLog()
+  if (state.nav === 'log') body = renderLogDetail()
+
+  return `
+    ${renderTopbar()}
+    ${state.notice ? `<div class="page-shell" style="padding-top:14px;"><div class="card" style="padding:14px 18px;">${escapeHtml(state.notice)}</div></div>` : ''}
+    ${body}
+  `
+}
+
+function render() {
+  if (!state.user && state.screen !== 'loading') {
+    app.innerHTML = renderAuth()
+    bindEvents()
     return
   }
 
-  await ensureAppUser(state.user)
-  if (!state.selectedCity) state.selectedCity = { ...DEFAULT_CITY }
-  await Promise.all([loadData(), refreshSelectedCityData()])
-  state.screen = 'app'
-  render()
+  if (state.screen === 'loading') {
+    app.innerHTML = renderLoading()
+    return
+  }
+
+  app.innerHTML = renderApp()
+  bindEvents()
 }
 
 const handleAuthSubmit = safeRun(async event => {
@@ -912,8 +879,9 @@ const handleAuthSubmit = safeRun(async event => {
   const form = new FormData(event.currentTarget)
   const email = String(form.get('email') || '').trim().toLowerCase()
   const password = String(form.get('password') || '').trim()
-  state.authError = ''
+
   state.authBusy = true
+  state.authError = ''
   state.authMessage = state.authMode === 'signup' ? 'Creating account...' : 'Signing in...'
   render()
 
@@ -925,13 +893,13 @@ const handleAuthSubmit = safeRun(async event => {
         options: { emailRedirectTo: 'https://sling-gogiapp.web.app/email-confirmed.html' }
       })
 
-      if (error && /already been registered|user already registered/i.test(error.message)) {
+      if (error && /already been registered|user already registered/i.test(String(error.message || ''))) {
         const signIn = await supabase.auth.signInWithPassword({ email, password })
         if (signIn.error) {
           state.authError = normalizeAuthMessage(signIn.error.message)
           return
         }
-        await enterAppWithSession(signIn.data.session)
+        await enterApp(signIn.data.session)
         return
       }
 
@@ -940,15 +908,15 @@ const handleAuthSubmit = safeRun(async event => {
         return
       }
 
-      if (data?.session?.user) {
-        await enterAppWithSession(data.session)
+      if (data?.session) {
+        await enterApp(data.session)
         return
       }
 
       state.pendingEmail = email
+      state.screen = 'auth'
       state.authMode = 'signin'
-      state.screen = 'check-email'
-      render()
+      toast(`Check ${email} for your confirmation link, then sign in.`)
       return
     }
 
@@ -958,7 +926,7 @@ const handleAuthSubmit = safeRun(async event => {
       return
     }
 
-    await enterAppWithSession(data.session)
+    await enterApp(data.session)
   } finally {
     state.authBusy = false
     state.authMessage = ''
@@ -968,10 +936,32 @@ const handleAuthSubmit = safeRun(async event => {
 
 const signOut = safeRun(async () => {
   await supabase.auth.signOut()
-  await enterAppWithSession(null)
+  state.user = null
+  state.session = null
+  state.appUser = null
+  state.nav = 'home'
+  render()
 })
 
-const submitLog = safeRun(async event => {
+const searchCity = safeRun(async () => {
+  state.cityResults = await searchCities(state.cityQuery)
+  render()
+})
+
+const chooseCity = safeRun(async index => {
+  const city = state.cityResults[index]
+  if (!city) return
+  state.selectedCity = city
+  const [country, weather] = await Promise.all([
+    fetchCountry(city.country_code),
+    fetchWeather(city)
+  ])
+  state.selectedCountry = country
+  state.selectedWeather = weather
+  render()
+})
+
+const saveLog = safeRun(async event => {
   event.preventDefault()
   const form = new FormData(event.currentTarget)
   const payload = {
@@ -979,40 +969,42 @@ const submitLog = safeRun(async event => {
     city_name: String(form.get('city_name') || '').trim(),
     country_name: String(form.get('country_name') || '').trim(),
     country_code: String(form.get('country_code') || '').trim().toUpperCase(),
-    visit_date: String(form.get('visit_date') || '').trim() || null,
-    rating: Number(form.get('rating') || 0),
-    tags: TAGS.filter(tag => form.getAll('tags').includes(tag)),
     notes: String(form.get('notes') || '').trim(),
+    tags: TAGS.filter(tag => form.getAll('tags').includes(tag)),
+    rating: Number(form.get('rating') || 0),
     is_public: true
-  }
-
-  if (!payload.title || !payload.city_name || !payload.country_name || !payload.country_code) {
-    toast('Please fill in the title, city, country, and country code.')
-    return
   }
 
   const { error } = await supabase.from(TABLES.logs).insert(payload)
   if (error) throw error
   event.currentTarget.reset()
   await loadData()
+  toast('Log saved.')
   state.nav = 'home'
-  toast('Travel log published.')
   render()
 })
 
-const submitComment = safeRun(async event => {
+const saveBucketItem = safeRun(async event => {
   event.preventDefault()
-  const logId = event.currentTarget.dataset.logId
   const form = new FormData(event.currentTarget)
-  const commentText = String(form.get('comment_text') || '').trim()
-  if (!commentText) {
-    toast('Write a comment first.')
-    return
+  const payload = {
+    city_name: String(form.get('city_name') || '').trim(),
+    country_name: String(form.get('country_name') || '').trim(),
+    country_code: String(form.get('country_code') || '').trim().toUpperCase(),
+    notes: String(form.get('notes') || '').trim()
   }
-  const { error } = await supabase.from(TABLES.comments).insert({ log_id: logId, comment_text: commentText })
+
+  const finalPayload = {
+    ...payload,
+    notes: cleanBucketNotes(payload.notes) || defaultBucketNote(payload)
+  }
+
+  const { error } = await supabase.from(TABLES.bucketList).insert(finalPayload)
   if (error) throw error
   event.currentTarget.reset()
   await loadData()
+  toast('Saved to your bucket list.')
+  state.nav = 'bucket'
   render()
 })
 
@@ -1030,71 +1022,81 @@ const toggleUpvote = safeRun(async logId => {
   render()
 })
 
-const runCitySearch = safeRun(async () => {
-  const query = state.cityQuery.trim()
-  if (!query) {
-    toast('Enter a city name first.')
-    return
+const saveComment = safeRun(async event => {
+  event.preventDefault()
+  const form = new FormData(event.currentTarget)
+  const payload = {
+    log_id: state.currentLogId,
+    comment_text: String(form.get('comment_text') || '').trim()
   }
-  state.cityResults = await searchCities(query)
+  const { error } = await supabase.from(TABLES.comments).insert(payload)
+  if (error) throw error
+  event.currentTarget.reset()
+  await loadData()
+  toast('Comment posted.')
   render()
 })
 
-const chooseCity = safeRun(async raw => {
-  const city = JSON.parse(raw)
-  state.selectedCity = city
-  state.cityResults = []
-  state.cityQuery = city.city_name
-  await refreshSelectedCityData()
+function bindEvents() {
+  document.getElementById('auth-form')?.addEventListener('submit', handleAuthSubmit)
+  document.getElementById('switch-auth')?.addEventListener('click', () => {
+    state.authMode = state.authMode === 'signup' ? 'signin' : 'signup'
+    state.authError = ''
+    render()
+  })
+  document.getElementById('sign-out')?.addEventListener('click', signOut)
+  document.getElementById('search-city-btn')?.addEventListener('click', searchCity)
+  document.getElementById('city-query')?.addEventListener('input', event => {
+    state.cityQuery = event.target.value
+  })
+  document.getElementById('log-form')?.addEventListener('submit', saveLog)
+  document.getElementById('bucket-form')?.addEventListener('submit', saveBucketItem)
+  document.getElementById('comment-form')?.addEventListener('submit', saveComment)
+
+  document.querySelectorAll('[data-nav]').forEach(button => button.addEventListener('click', () => {
+    state.nav = button.dataset.nav
+    render()
+  }))
+  document.querySelectorAll('[data-city-index]').forEach(button => button.addEventListener('click', () => chooseCity(Number(button.dataset.cityIndex))))
+  document.querySelectorAll('.open-log').forEach(button => button.addEventListener('click', () => {
+    state.currentLogId = button.dataset.logId
+    state.nav = 'log'
+    render()
+  }))
+  document.querySelectorAll('.toggle-upvote').forEach(button => button.addEventListener('click', () => toggleUpvote(button.dataset.logId)))
+  document.querySelectorAll('.open-profile').forEach(button => button.addEventListener('click', () => {
+    state.currentProfileUserId = button.dataset.userId
+    state.nav = 'profile'
+    render()
+  }))
+}
+
+async function enterApp(session) {
+  state.session = session || null
+  state.user = session?.user || null
+
+  if (!state.user) {
+    state.screen = 'auth'
+    render()
+    return
+  }
+
+  await ensureAppUser(state.user)
+  await loadData()
+  state.screen = 'app'
   render()
-})
+}
 
 function setupRealtime() {
   if (state.initializedRealtime) return
   state.initializedRealtime = true
-  try {
-    supabase.channel('wandermap-live')
-      .on('postgres_changes', { event: '*', schema: 'public', table: TABLES.logs }, async () => { await loadData(); render() })
-      .on('postgres_changes', { event: '*', schema: 'public', table: TABLES.comments }, async () => { await loadData(); render() })
-      .on('postgres_changes', { event: '*', schema: 'public', table: TABLES.upvotes }, async () => { await loadData(); render() })
-      .on('postgres_changes', { event: '*', schema: 'public', table: TABLES.bucketList }, async () => { await loadData(); render() })
-      .subscribe()
-  } catch (error) {
-    console.error('Realtime error:', error?.message)
-  }
-}
 
-function bindEvents() {
-  try {
-    document.getElementById('auth-form')?.addEventListener('submit', handleAuthSubmit)
-    document.getElementById('switch-auth')?.addEventListener('click', () => {
-      if (state.authBusy) return
-      state.authMode = state.authMode === 'signup' ? 'signin' : 'signup'
-      state.authError = ''
-      render()
-    })
-    document.getElementById('go-signin')?.addEventListener('click', () => {
-      state.screen = 'auth'
-      state.authMode = 'signin'
-      state.authError = ''
-      render()
-    })
-    document.getElementById('sign-out')?.addEventListener('click', signOut)
-    document.getElementById('log-form')?.addEventListener('submit', submitLog)
-    document.getElementById('search-city')?.addEventListener('click', runCitySearch)
-    document.getElementById('city-query')?.addEventListener('input', event => {
-      state.cityQuery = event.target.value
-    })
-    document.querySelectorAll('[data-nav]').forEach(btn => btn.addEventListener('click', () => {
-      state.nav = btn.dataset.nav
-      render()
-    }))
-    document.querySelectorAll('.toggle-upvote').forEach(btn => btn.addEventListener('click', () => toggleUpvote(btn.dataset.logId)))
-    document.querySelectorAll('.comment-form').forEach(form => form.addEventListener('submit', submitComment))
-    document.querySelectorAll('.city-result').forEach(btn => btn.addEventListener('click', () => chooseCity(btn.dataset.city)))
-  } catch (error) {
-    console.error('Bind error:', error?.message, error?.stack)
-  }
+  supabase.channel('wandermap-live')
+    .on('postgres_changes', { event: '*', schema: 'public', table: TABLES.logs }, async () => { await loadData(); render() })
+    .on('postgres_changes', { event: '*', schema: 'public', table: TABLES.comments }, async () => { await loadData(); render() })
+    .on('postgres_changes', { event: '*', schema: 'public', table: TABLES.upvotes }, async () => { await loadData(); render() })
+    .on('postgres_changes', { event: '*', schema: 'public', table: TABLES.bucketList }, async () => { await loadData(); render() })
+    .subscribe()
 }
 
 async function init() {
@@ -1102,9 +1104,12 @@ async function init() {
     state.loadingPhoto = await fetchApod()
     render()
     const { data: { session } } = await supabase.auth.getSession()
-    await enterAppWithSession(session)
+    await enterApp(session)
     setupRealtime()
-    render()
+
+    supabase.auth.onAuthStateChange(async (_event, session) => {
+      await enterApp(session)
+    })
   } catch (error) {
     console.error('Init error:', error?.message, error?.stack)
     state.screen = 'auth'
