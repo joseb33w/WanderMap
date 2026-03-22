@@ -265,6 +265,76 @@ function feedSpotScore(spot) {
   return stats.weighted * 8 + freshnessBoost - Math.min(distance, 20) * 0.15
 }
 
+function monthlyAwards() {
+  const now = new Date()
+  const month = now.getMonth()
+  const year = now.getFullYear()
+  const currentMonthReviews = state.reviews.filter(r => {
+    const d = new Date(r.created_at)
+    return d.getMonth() === month && d.getFullYear() === year
+  })
+  const byTag = {}
+  state.spots.forEach(spot => {
+    const monthReviewsForSpot = currentMonthReviews.filter(r => r.spot_id === spot.id)
+    if (!monthReviewsForSpot.length) return
+    const score = avg(monthReviewsForSpot.map(r => avg([Number(r.taste_rating), Number(r.portion_rating), Number(r.value_rating)])))
+    const confidence = Math.min(monthReviewsForSpot.length, 8) * 0.12
+    const awardScore = score + confidence
+    ;(spot.food_tags || []).forEach(tag => {
+      if (!byTag[tag] || awardScore > byTag[tag].score) byTag[tag] = { tag, score: awardScore, spot, reviewCount: monthReviewsForSpot.length }
+    })
+  })
+  return Object.values(byTag).sort((a, b) => b.score - a.score)
+}
+
+function mostExploredFoodTypes(userId) {
+  const counts = {}
+  state.reviews.filter(r => r.user_id === userId).forEach(review => {
+    const spot = state.spots.find(s => s.id === review.spot_id)
+    ;(spot?.food_tags || []).forEach(tag => {
+      counts[tag] = (counts[tag] || 0) + 1
+    })
+  })
+  state.spots.filter(s => s.user_id === userId).forEach(spot => {
+    ;(spot.food_tags || []).forEach(tag => {
+      counts[tag] = (counts[tag] || 0) + 1
+    })
+  })
+  return Object.entries(counts).sort((a, b) => b[1] - a[1])
+}
+
+function ratingsDistribution(userId) {
+  const result = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }
+  state.reviews.filter(r => r.user_id === userId).forEach(review => {
+    const overall = Math.round(avg([Number(review.taste_rating), Number(review.portion_rating), Number(review.value_rating)]))
+    result[overall] = (result[overall] || 0) + 1
+  })
+  return result
+}
+
+function discoveryTimeline(userId) {
+  const map = {}
+  state.spots.filter(s => s.user_id === userId).forEach(spot => {
+    const key = new Date(spot.created_at).toLocaleDateString([], { month: 'short', year: 'numeric' })
+    map[key] = (map[key] || 0) + 1
+  })
+  return Object.entries(map).map(([month, count]) => ({ month, count }))
+}
+
+function crawlStopsFor(crawlId) {
+  return state.crawlStops
+    .filter(stop => stop.crawl_id === crawlId)
+    .sort((a, b) => a.stop_order - b.stop_order)
+    .map(stop => ({ ...stop, spot: state.spots.find(s => s.id === stop.spot_id) }))
+}
+
+function cloneStopsFor(cloneId) {
+  return state.crawlCloneStops
+    .filter(stop => stop.crawl_clone_id === cloneId)
+    .sort((a, b) => a.stop_order - b.stop_order)
+    .map(stop => ({ ...stop, spot: state.spots.find(s => s.id === stop.spot_id) }))
+}
+
 async function fetchNASA() {
   try {
     const res = await fetch('https://api.nasa.gov/planetary/apod?api_key=DEMO_KEY')
@@ -383,7 +453,7 @@ async function fetchCountryAndWeather() {
     state.weather = weatherData
   } catch (error) {
     console.error('Weather/country error:', error?.message)
-    if (!state.country) applyFallbackLocation('Location services unavailable. Showing Los Angeles fallback.')
+    if (!state.country) applyFallbackLocation('Map location services are unavailable. Showing Los Angeles fallback.')
   }
 }
 
@@ -422,9 +492,11 @@ function beginAuthWork(message = 'Working...') {
   const requestId = state.authRequestId
   state.authBusy = true
   state.authMessage = message
+  state.lastAuthActionAt = Date.now()
   if (state.authTimeoutId) clearTimeout(state.authTimeoutId)
   state.authTimeoutId = setTimeout(() => {
     if (state.authBusy && state.authRequestId === requestId) {
+      console.warn('Auth timeout fallback triggered')
       state.authBusy = false
       state.authMessage = ''
       state.authProcessingSession = false
@@ -554,6 +626,13 @@ function buildPersonalizedFeed() {
   state.personalizedFeed = feedItems.sort((a, b) => b.score - a.score || new Date(b.created_at) - new Date(a.created_at)).slice(0, 20)
 }
 
+function spinFoodType() {
+  const pick = FOOD_TYPES[Math.floor(Math.random() * FOOD_TYPES.length)]
+  const best = nearbySpots(20, pick).sort((a, b) => b.stats.weighted - a.stats.weighted)[0] || null
+  state.spinnerResult = { type: pick, best }
+  render()
+}
+
 function setNav(nav) {
   state.nav = nav
   render()
@@ -574,11 +653,11 @@ function openProfile(userId) {
 function renderAuth() {
   return `
     <div class="auth-wrap">
-      <div class="auth-card card stamp-card">
-        <div class="brand-mark"><i class="fa-solid fa-compass"></i></div>
+      <div class="card auth-card stamp-card">
+        <div class="brand-mark"><i class="fa-solid fa-map-location-dot"></i></div>
         <h1 class="title">WanderMap</h1>
-        <p class="subtitle">Collect street food finds, save areas, and build crawls with your account.</p>
-        <form id="auth-form" class="form-stack" style="margin-top:20px;">
+        <p class="subtitle">Street food scouting with neon grit. Drop pins, write reviews, build crawls, and follow the city's best bites.</p>
+        <form id="auth-form" class="form-stack" style="margin-top:18px;">
           <div>
             <label class="label">Email</label>
             <input class="input" type="email" name="email" required ${state.authBusy ? 'disabled' : ''}>
@@ -588,9 +667,9 @@ function renderAuth() {
             <input class="input" type="password" name="password" required minlength="6" ${state.authBusy ? 'disabled' : ''}>
           </div>
           <div id="auth-error" class="auth-error">${escapeHtml(state.authErrorText || '')}</div>
-          <button class="btn btn-primary" type="submit" ${state.authBusy ? 'disabled' : ''}>${state.authBusy ? (state.authMessage || 'Working...') : state.authMode === 'signup' ? 'Create account' : 'Sign in'}</button>
+          <button class="btn btn-primary" type="submit" style="width:100%;" ${state.authBusy ? 'disabled' : ''}>${state.authBusy ? (state.authMessage || 'Working...') : state.authMode === 'signup' ? 'Create account' : 'Sign in'}</button>
         </form>
-        <button class="auth-switch" id="switch-auth">${state.authMode === 'signup' ? 'Already have an account? <strong>Sign in</strong>' : `Don't have an account? <strong>Sign up</strong>`}</button>
+        <button class="auth-switch" id="switch-auth" ${state.authBusy ? 'disabled' : ''}>${state.authMode === 'signup' ? 'Already have an account? <strong>Sign in</strong>' : `Don't have an account? <strong>Sign up</strong>`}</button>
       </div>
     </div>
   `
@@ -599,11 +678,11 @@ function renderAuth() {
 function renderCheckEmail() {
   return `
     <div class="auth-wrap">
-      <div class="auth-card card stamp-card">
-        <div class="brand-mark"><i class="fa-regular fa-envelope"></i></div>
-        <h1 class="title" style="font-size:1.9rem;">Check your email</h1>
-        <p class="subtitle">We sent a confirmation link to <strong>${escapeHtml(state.pendingEmail || '')}</strong>. Tap it, then come back and sign in.</p>
-        <button class="btn btn-primary" id="go-signin" style="margin-top:20px;">Go to sign in</button>
+      <div class="card auth-card stamp-card">
+        <div class="brand-mark"><i class="fa-solid fa-envelope-open-text"></i></div>
+        <h1 class="title">Check your email</h1>
+        <p class="subtitle">We sent a confirmation link to <strong>${escapeHtml(state.pendingEmail || '')}</strong>. Tap the link, then come back and sign in to start mapping bites.</p>
+        <button class="btn btn-primary" id="go-signin" style="width:100%; margin-top:18px;">Go to sign in</button>
       </div>
     </div>
   `
@@ -613,14 +692,15 @@ function renderLoading() {
   const image = state.loadingPhoto?.url || ''
   return `
     <div class="loading-screen">
-      <div class="loading-card card stamp-card">
+      <div class="card loading-card stamp-card">
         <div class="loading-media" style="background-image:url('${escapeHtml(image)}')">
           <div class="loading-overlay"></div>
         </div>
         <div class="loading-copy">
-          <div class="kicker">Daily space dispatch</div>
-          <h1 class="title" style="text-align:left; font-size:2rem; margin-top:10px;">WanderMap</h1>
-          <p class="subtitle" style="text-align:left; margin-top:10px;">Loading your location, weather, and saved street food world.</p>
+          <div class="kicker">Daily cosmic snack break</div>
+          <h1 class="title" style="text-align:left; margin-top:10px;">Loading WanderMap</h1>
+          <p class="hero-copy">NASA APOD sets the mood while we scout your location, weather, and nearby street food scene.</p>
+          <p class="log-city" style="margin-top:12px;">If this takes more than a few seconds, WanderMap will continue with a fallback city and you can refresh location later.</p>
         </div>
       </div>
     </div>
@@ -657,13 +737,14 @@ function renderSpotCard(spot) {
   const stats = reviewStatsForSpot(spot.id)
   const owner = profileFor(spot.user_id)
   const distance = state.geo ? distanceKm(state.geo.latitude, state.geo.longitude, Number(spot.latitude), Number(spot.longitude)) : null
+  const isFollowing = state.user && state.user.id !== spot.user_id && state.follows.some(f => f.follower_user_id === state.user.id && f.following_user_id === spot.user_id)
   return `
     <div class="card log-card stamp-card">
       <div class="log-head">
         <div>
           <div class="kicker">${spot.country_flag || ''} ${escapeHtml(spot.country_name || 'Local')}</div>
           <h3 style="margin-top:8px;">${escapeHtml(spot.name)}</h3>
-          <div class="log-city">by ${escapeHtml(owner?.display_name || 'Food scout')} � ${fmtDateTime(spot.created_at)}</div>
+          <div class="log-city">by ${escapeHtml(owner?.display_name || 'Food scout')} - ${fmtDateTime(spot.created_at)}</div>
         </div>
         <div class="meta-chip">${stats.count ? stats.overall.toFixed(1) + ' star' : 'New'}</div>
       </div>
@@ -672,6 +753,7 @@ function renderSpotCard(spot) {
       <div class="meta-row">
         <button class="btn btn-secondary open-spot" data-spot-id="${spot.id}">Open spot</button>
         <button class="btn btn-ghost open-profile" data-user-id="${spot.user_id}">Profile</button>
+        ${state.user && state.user.id !== spot.user_id ? `<button class="btn btn-secondary follow-btn" data-user-id="${spot.user_id}">${isFollowing ? 'Following' : 'Follow'}</button>` : ''}
       </div>
     </div>
   `
@@ -709,24 +791,33 @@ function renderHome() {
             </div>
             <div class="meta-row">
               <span class="meta-chip">Population: ${state.country?.population ? Number(state.country.population).toLocaleString() : '-'}</span>
+              <span class="meta-chip">GPS: ${state.geo ? `${state.geo.latitude.toFixed(3)}, ${state.geo.longitude.toFixed(3)}` : 'Location off'}</span>
+            </div>
+            <div class="meta-row">
               <span class="meta-chip">Source: ${state.geoSource === 'device' ? 'Device GPS' : 'Fallback city'}</span>
+              ${state.geoError ? `<span class="meta-chip">${escapeHtml(state.geoError)}</span>` : ''}
             </div>
           </div>
         </div>
       </section>
 
       <section class="section">
-        <div class="section-title">
-          <div><h2>Recently added spots</h2><p>Fresh pins from the community.</p></div>
-        </div>
+        <div class="section-title"><div><h2>Recently added spots</h2><p>Fresh pins from the community.</p></div></div>
         <div class="grid feed-grid">
           <div class="log-list">
             ${recent.length ? recent.map(renderSpotCard).join('') : `<div class="card log-card">No spots yet. Be the first to tag a food gem.</div>`}
           </div>
           <div class="side-stack">
             <div class="card stats-card stamp-card">
-              <div class="section-title"><div><h2 style="font-size:1.25rem;">Highest rated nearby</h2><p>Weighted for quality and distance.</p></div></div>
-              ${nearby.length ? nearby.map(spot => `<div style="padding:14px 0; border-top:1px solid var(--border);"><strong>${escapeHtml(spot.name)}</strong><div class="log-city">${spot.country_flag || ''} ${escapeHtml((spot.food_tags || []).join(', '))}</div><div class="meta-row"><span class="meta-chip">${Number.isFinite(spot.distance) ? `${spot.distance.toFixed(1)} km away` : 'Distance unavailable'}</span><span class="meta-chip">${spot.stats.count} reviews</span></div><div class="meta-row"><button class="btn btn-ghost open-spot" data-spot-id="${spot.id}">Open</button></div></div>`).join('') : `<div class="card log-card">Add reviews to surface nearby legends.</div>`}
+              <div class="section-title"><div><h2 style="font-size:1.25rem;">Highest rated nearby</h2><p>Weighted for quality, confidence, and distance.</p></div></div>
+              ${nearby.length ? nearby.map(spot => {
+                const owner = profileFor(spot.user_id)
+                return `<div style="padding:14px 0; border-top:1px solid var(--border);">
+                  <div class="log-head"><div><strong>${escapeHtml(spot.name)}</strong><div class="log-city">${spot.country_flag || ''} ${escapeHtml((spot.food_tags || []).join(', '))}</div></div><div class="meta-chip">${spot.stats.overall.toFixed(1)} star</div></div>
+                  <div class="meta-row"><span class="meta-chip">${Number.isFinite(spot.distance) ? `${spot.distance.toFixed(1)} km away` : 'Distance unavailable'}</span><span class="meta-chip">by ${escapeHtml(owner?.display_name || 'Food scout')}</span><span class="meta-chip">${spot.stats.count} reviews</span></div>
+                  <div class="meta-row"><button class="btn btn-secondary open-spot" data-spot-id="${spot.id}">Open</button></div>
+                </div>`
+              }).join('') : `<div class="card log-card">Add reviews to surface nearby legends.</div>`}
             </div>
           </div>
         </div>
@@ -738,16 +829,14 @@ function renderHome() {
 function renderMapPage() {
   return `
     <div class="page-shell section">
-      <div class="grid feed-grid">
-        <div class="card stats-card stamp-card">
-          <div class="section-title"><div><h2>Live map</h2><p>Location-aware browsing and nearby ranking.</p></div></div>
-          ${highestRatedNearby(8).map(spot => `<div style="padding:12px 0; border-top:1px solid var(--border);"><strong>${escapeHtml(spot.name)}</strong><div class="log-city">${Number.isFinite(spot.distance) ? spot.distance.toFixed(1) : '-'} km � ${spot.stats.overall.toFixed(1)} star � ${(spot.food_tags || []).join(', ')}</div><div class="meta-row"><button class="btn btn-ghost open-spot" data-spot-id="${spot.id}">Open</button></div></div>`).join('') || `<div class="card log-card">Add spots to light up the map.</div>`}
+      <div class="card stats-card stamp-card">
+        <div class="section-title"><div><h2>Interactive street food map</h2><p>Location-aware browsing and saved area shortcuts.</p></div></div>
+        <div class="info-grid">
+          <div class="info-box"><strong>Closest hot spots</strong><div class="log-city">${highestRatedNearby(1)[0] ? escapeHtml(highestRatedNearby(1)[0].name) : 'No nearby spots yet'}</div></div>
+          <div class="info-box"><strong>Saved areas</strong><div class="log-city">${state.savedAreas.length} saved</div></div>
         </div>
-        <div class="side-stack">
-          <div class="card stats-card stamp-card">
-            <div class="section-title"><div><h2 style="font-size:1.25rem;">Saved areas</h2><p>Quick jump zones for repeat hunts.</p></div></div>
-            ${state.savedAreas.length ? state.savedAreas.slice(0, 6).map(area => `<div style="padding:12px 0; border-top:1px solid var(--border);"><strong>${escapeHtml(area.label)}</strong><div class="log-city">${escapeHtml(area.city_name || 'Area')} � ${escapeHtml(area.country_name || '')} � radius ${Number(area.radius_km || 5).toFixed(1)} km</div></div>`).join('') : `<div class="card log-card">Save a city or area from the bucket list tab.</div>`}
-          </div>
+        <div class="log-list" style="margin-top:16px;">
+          ${highestRatedNearby(8).map(spot => `<div style="padding:12px 0; border-top:1px solid var(--border);"><strong>${escapeHtml(spot.name)}</strong><div class="log-city">${Number.isFinite(spot.distance) ? spot.distance.toFixed(1) : '-'} km - ${spot.stats.overall.toFixed(1)} star - ${(spot.food_tags || []).join(', ')}</div><div class="meta-row"><button class="btn btn-secondary open-spot" data-spot-id="${spot.id}">Open</button></div></div>`).join('') || `<div class="card log-card">Add spots to light up the map.</div>`}
         </div>
       </div>
     </div>
@@ -759,7 +848,7 @@ function renderAddSpot() {
     <div class="page-shell section">
       <div class="grid feed-grid">
         <div class="card form-card stamp-card">
-          <div class="section-title"><div><h2>Add a street food spot</h2><p>Coordinates come from browser geolocation, with a fallback city if GPS is blocked.</p></div></div>
+          <div class="section-title"><div><h2>Add a street food spot</h2><p>Coordinates come from your browser geolocation, with a fallback city if GPS is blocked.</p></div></div>
           <form id="spot-form" class="form-stack">
             <div>
               <label class="label">Spot name</label>
@@ -776,7 +865,7 @@ function renderAddSpot() {
               </div>
               <div>
                 <label class="label">GPS capture</label>
-                <div class="meta-chip" style="padding:14px 16px; display:block;">${state.geo ? `${state.geo.latitude.toFixed(5)}, ${state.geo.longitude.toFixed(5)} � ${state.geoSource === 'device' ? 'device' : 'fallback'}` : 'Location unavailable'}</div>
+                <div class="meta-chip" style="padding:14px 16px; display:block;">${state.geo ? `${state.geo.latitude.toFixed(5)}, ${state.geo.longitude.toFixed(5)} - ${state.geoSource === 'device' ? 'device' : 'fallback'}` : 'Location unavailable'}</div>
               </div>
             </div>
             <div>
@@ -785,13 +874,17 @@ function renderAddSpot() {
                 ${FOOD_TYPES.map(tag => `<label class="tag" style="cursor:pointer;"><input type="checkbox" name="food_tags" value="${tag}" style="margin-right:8px;">${tag}</label>`).join('')}
               </div>
             </div>
-            <button class="btn btn-primary" type="submit">Save spot</button>
+            <button class="btn btn-primary" type="submit">Save this spot</button>
           </form>
         </div>
         <div class="side-stack">
           <div class="card stats-card stamp-card">
-            <h3 style="margin-bottom:8px;">Auto-tagging</h3>
-            <p class="hero-copy">The app uses browser geolocation first, then reverse geocoding and country lookup to tag each spot. If device GPS is unavailable, it falls back to Los Angeles so the flow still works.</p>
+            <h3>Auto-tagging</h3>
+            <p class="hero-copy">WanderMap uses browser geolocation first, then reverse geocoding and country data to tag each spot. If device GPS is unavailable, it falls back to Los Angeles so the app still works.</p>
+            <div class="meta-row">
+              <span class="meta-chip">Country: ${escapeHtml(state.country?.name || '-')}</span>
+              <span class="meta-chip">Flag: ${escapeHtml(state.country?.flag || '-')}</span>
+            </div>
           </div>
         </div>
       </div>
@@ -848,21 +941,21 @@ function renderSpotPage() {
               return `<div class="card log-card stamp-card"><div class="log-head"><div><strong>${escapeHtml(profile?.display_name || 'Food scout')}</strong><div class="log-city">${fmtDateTime(review.created_at)}</div></div><div class="meta-chip">${Math.round(avg([review.taste_rating, review.portion_rating, review.value_rating]))} star</div></div><p class="log-notes">${escapeHtml(review.review_text || '')}</p><div class="meta-row"><span class="meta-chip">Taste ${review.taste_rating}</span><span class="meta-chip">Portion ${review.portion_rating}</span><span class="meta-chip">Value ${review.value_rating}</span></div></div>`
             }).join('') : `<div class="card log-card">No reviews yet. Be the first to rate it.</div>`}
           </div>
-          <div class="card form-card stamp-card">
+          <div class="card stats-card stamp-card">
             <div class="section-title"><div><h2>Comments</h2><p>Quick reactions, tips, and replies.</p></div></div>
             <form id="comment-form" class="form-stack">
               <input type="hidden" name="parent_comment_id" value="${escapeHtml(state.currentReplyParentId || '')}">
               <div><label class="label">Comment ${state.currentReplyParentId ? '(replying)' : ''}</label><textarea class="textarea" name="comment_text" placeholder="Best order? Best time to go? Parking tricks?"></textarea></div>
               <button class="btn btn-primary" type="submit">Post comment</button>
             </form>
-            <div class="comment-list" style="display:grid; margin-top:18px;">
+            <div class="comment-list" style="display:grid; gap:10px; margin-top:18px;">
               ${comments.length ? comments.map(renderCommentCard).join('') : `<div class="card log-card">No comments yet. Start the conversation.</div>`}
             </div>
           </div>
         </div>
         <div class="side-stack">
           <div class="card stats-card stamp-card">
-            <h3 style="margin-bottom:8px;">Spot details</h3>
+            <h3>Spot details</h3>
             <div class="meta-row">
               <span class="meta-chip">Lat ${Number(spot.latitude).toFixed(4)}</span>
               <span class="meta-chip">Lon ${Number(spot.longitude).toFixed(4)}</span>
@@ -873,10 +966,8 @@ function renderSpotPage() {
             </div>
           </div>
           <div class="card stats-card stamp-card">
-            <h3 style="margin-bottom:8px;">Foodie who found it</h3>
-            <div class="log-city">${escapeHtml(owner?.display_name || 'Food scout')}</div>
-            <div class="meta-row"><span class="meta-chip">${buildProfileSummary(spot.user_id).spotCount} spots</span><span class="meta-chip">${buildProfileSummary(spot.user_id).reviewCount} reviews</span><span class="meta-chip">${buildProfileSummary(spot.user_id).rank.name}</span></div>
-            <div class="meta-row"><button class="btn btn-ghost open-profile" data-user-id="${spot.user_id}">Open profile</button></div>
+            <h3>Nearby alternatives</h3>
+            ${nearbySpots(5).filter(s => s.id !== spot.id).map(s => `<div style="padding:12px 0; border-top:1px solid var(--border);"><strong>${escapeHtml(s.name)}</strong><div class="log-city">${Number.isFinite(s.distance) ? s.distance.toFixed(1) : '-'} km - ${s.stats.overall.toFixed(1)} star</div><button class="btn btn-secondary open-spot" data-spot-id="${s.id}" style="margin-top:8px;">Open</button></div>`).join('') || `<div class="card log-card">No nearby alternatives yet.</div>`}
           </div>
         </div>
       </div>
@@ -897,12 +988,12 @@ function renderCommentCard(comment) {
       </div>
       <p class="log-notes">${escapeHtml(comment.comment_text || '')}</p>
       <div class="meta-row">
-        <button class="btn btn-ghost toggle-comment-like" data-comment-id="${comment.id}">${liked ? 'Liked' : 'Like'}</button>
+        <button class="btn btn-secondary toggle-comment-like" data-comment-id="${comment.id}">${liked ? 'Liked' : 'Like'}</button>
         <button class="btn btn-ghost reply-comment" data-comment-id="${comment.id}">Reply</button>
       </div>
-      ${comment.replies?.length ? `<div style="display:grid; gap:10px; margin-top:12px; padding-left:14px; border-left:2px solid rgba(255,255,255,0.08);">${comment.replies.map(reply => {
+      ${comment.replies?.length ? `<div class="comment-list" style="display:grid; gap:10px; margin-top:12px; padding-left:18px; border-left:2px solid rgba(255,255,255,0.08);">${comment.replies.map(reply => {
         const replyLiked = state.commentLikes.some(like => like.comment_id === reply.id && like.user_id === state.user?.id)
-        return `<div class="card log-card"><div class="log-head"><div><strong>${escapeHtml(reply.profile?.display_name || 'Food scout')}</strong><div class="log-city">${fmtDateTime(reply.created_at)}</div></div><div class="meta-chip">${reply.likes} likes</div></div><p class="log-notes">${escapeHtml(reply.comment_text || '')}</p><div class="meta-row"><button class="btn btn-ghost toggle-comment-like" data-comment-id="${reply.id}">${replyLiked ? 'Liked' : 'Like'}</button></div></div>`
+        return `<div class="card log-card"><div class="log-head"><div><strong>${escapeHtml(reply.profile?.display_name || 'Food scout')}</strong><div class="log-city">${fmtDateTime(reply.created_at)}</div></div><div class="meta-chip">${reply.likes} likes</div></div><p class="log-notes">${escapeHtml(reply.comment_text || '')}</p><div class="meta-row"><button class="btn btn-secondary toggle-comment-like" data-comment-id="${reply.id}">${replyLiked ? 'Liked' : 'Like'}</button></div></div>`
       }).join('')}</div>` : ''}
     </div>
   `
@@ -922,7 +1013,7 @@ function renderCrawls() {
             <div>
               <label class="label">Pick 3 to 7 spots in order</label>
               <div class="side-stack" style="max-height:320px; overflow:auto;">
-                ${availableSpots.length ? availableSpots.map(spot => `<label class="card" style="padding:12px 14px; border-radius:16px; cursor:pointer;"><input type="checkbox" name="spot_ids" value="${spot.id}" style="margin-right:10px;"> <strong>${escapeHtml(spot.name)}</strong><div class="log-city">${escapeHtml((spot.food_tags || []).join(', '))} � ${escapeHtml(spot.country_flag || '')}</div></label>`).join('') : `<div class="card log-card">Add spots first to build a crawl.</div>`}
+                ${availableSpots.length ? availableSpots.map(spot => `<label class="card" style="padding:12px 14px; border-radius:16px; cursor:pointer;"><input type="checkbox" name="spot_ids" value="${spot.id}" style="margin-right:10px;"> <strong>${escapeHtml(spot.name)}</strong><div class="log-city">${escapeHtml((spot.food_tags || []).join(', '))} - ${escapeHtml(spot.country_flag || '')}</div></label>`).join('') : `<div class="card log-card">Add spots first to build a crawl.</div>`}
               </div>
             </div>
             <button class="btn btn-primary" type="submit">Map this crawl</button>
@@ -933,7 +1024,7 @@ function renderCrawls() {
             <div class="section-title"><div><h2>Public crawls</h2><p>Clone one and complete it.</p></div></div>
             ${state.crawls.length ? state.crawls.map(crawl => {
               const stops = crawlStopsFor(crawl.id)
-              return `<div style="padding:14px 0; border-top:1px solid var(--border);"><div class="log-head"><div><strong>${escapeHtml(crawl.name)}</strong><div class="log-city">${escapeHtml(crawl.city_name || 'Local')} � ${stops.length} stops</div></div><button class="btn btn-secondary clone-crawl" data-crawl-id="${crawl.id}">Clone</button></div><p class="log-notes">${escapeHtml(crawl.description || '')}</p><div class="meta-row">${stops.map(stop => `<span class="meta-chip">${stop.stop_order}. ${escapeHtml(stop.spot?.name || 'Spot')} ${stop.estimated_walk_minutes ? `� ${stop.estimated_walk_minutes} min` : ''}</span>`).join('')}</div></div>`
+              return `<div style="padding:14px 0; border-top:1px solid var(--border);"><div class="log-head"><div><strong>${escapeHtml(crawl.name)}</strong><div class="log-city">${escapeHtml(crawl.city_name || 'Local')} - ${stops.length} stops</div></div><button class="btn btn-secondary clone-crawl" data-crawl-id="${crawl.id}">Clone</button></div><p class="log-notes">${escapeHtml(crawl.description || '')}</p><div class="meta-row">${stops.map(stop => `<span class="meta-chip">${stop.stop_order}. ${escapeHtml(stop.spot?.name || 'Spot')} ${stop.estimated_walk_minutes ? `- ${stop.estimated_walk_minutes} min` : ''}</span>`).join('')}</div></div>`
             }).join('') : `<div class="card log-card">No public crawls yet.</div>`}
           </div>
           <div class="card stats-card stamp-card">
@@ -941,7 +1032,7 @@ function renderCrawls() {
             ${myClones.length ? myClones.map(clone => {
               const stops = cloneStopsFor(clone.id)
               const allVisited = stops.length && stops.every(s => s.visited)
-              return `<div style="padding:14px 0; border-top:1px solid var(--border);"><strong>${escapeHtml(state.crawls.find(c => c.id === clone.crawl_id)?.name || 'Crawl')}</strong><div class="log-city">${clone.status === 'completed' ? `Completed ${fmtDate(clone.completed_at)}` : 'In progress'}</div><div class="side-stack" style="margin-top:10px;">${stops.map(stop => `<div class="card" style="padding:10px 12px; border-radius:14px;">${stop.visited ? 'Done' : 'Open'} ${stop.stop_order}. ${escapeHtml(stop.spot?.name || 'Spot')} ${!stop.visited && clone.status !== 'completed' ? `<button class="btn btn-ghost mark-stop" data-clone-stop-id="${stop.id}" style="margin-left:10px;">Visited</button>` : ''}</div>`).join('')}</div>${clone.status !== 'completed' && allVisited ? `<div class="form-stack" style="margin-top:12px;"><input class="input complete-rating" data-clone-id="${clone.id}" type="number" min="1" max="5" placeholder="Overall rating 1-5"><textarea class="textarea complete-notes" data-clone-id="${clone.id}" placeholder="How was the crawl overall?"></textarea><button class="btn btn-primary complete-crawl" data-clone-id="${clone.id}">Complete crawl</button></div>` : ''}${clone.status === 'completed' ? `<div class="meta-row"><span class="meta-chip">Overall ${clone.overall_rating || '-'}</span><span class="meta-chip">${escapeHtml(clone.notes || '')}</span></div>` : ''}</div>`
+              return `<div style="padding:14px 0; border-top:1px solid var(--border);"><strong>${escapeHtml(state.crawls.find(c => c.id === clone.crawl_id)?.name || 'Crawl')}</strong><div class="log-city">${clone.status === 'completed' ? `Completed ${fmtDate(clone.completed_at)}` : 'In progress'}</div><div class="side-stack" style="margin-top:10px;">${stops.map(stop => `<div class="card" style="padding:10px 12px; border-radius:14px;">${stop.visited ? 'Done' : 'Todo'} ${stop.stop_order}. ${escapeHtml(stop.spot?.name || 'Spot')} ${!stop.visited && clone.status !== 'completed' ? `<button class="btn btn-ghost mark-stop" data-clone-stop-id="${stop.id}" style="margin-left:10px;">Visited</button>` : ''}</div>`).join('')}</div>${clone.status !== 'completed' && allVisited ? `<div class="form-stack" style="margin-top:12px;"><input class="input complete-rating" data-clone-id="${clone.id}" type="number" min="1" max="5" placeholder="Overall rating 1-5"><textarea class="textarea complete-notes" data-clone-id="${clone.id}" placeholder="How was the crawl overall?"></textarea><button class="btn btn-primary complete-crawl" data-clone-id="${clone.id}">Complete crawl</button></div>` : ''}${clone.status === 'completed' ? `<div class="meta-row"><span class="meta-chip">Overall ${clone.overall_rating || '-'} / 5</span><span class="meta-chip">${escapeHtml(clone.notes || '')}</span></div>` : ''}</div>`
             }).join('') : `<div class="card log-card">Clone a public crawl to track your route.</div>`}
           </div>
         </div>
@@ -971,8 +1062,10 @@ function renderBucketList() {
         </div>
         <div class="side-stack">
           <div class="card bucket-card stamp-card">
-            <div class="section-title"><div><h2>Saved areas</h2><p>Saved places from your account.</p></div></div>
-            ${state.savedAreas.length ? state.savedAreas.map(area => `<div style="padding:12px 0; border-top:1px solid var(--border);"><strong>${escapeHtml(area.label)}</strong><div class="log-city">${escapeHtml(area.city_name || 'Area')} � ${escapeHtml(area.country_name || '')}</div><div class="meta-row"><span class="meta-chip">${Number(area.radius_km || 5).toFixed(1)} km radius</span><span class="meta-chip">Pinned at ${Number(area.latitude).toFixed(3)}, ${Number(area.longitude).toFixed(3)}</span></div></div>`).join('') : `<div class="card log-card">No saved areas yet.</div>`}
+            <div class="section-title"><div><h2>Saved areas</h2><p>Tap one to revisit later.</p></div></div>
+            <div class="log-list">
+              ${state.savedAreas.length ? state.savedAreas.map(area => `<div class="card log-card stamp-card"><div class="kicker">${escapeHtml(area.city_name || 'Area')}</div><h3 style="margin-top:8px;">${escapeHtml(area.label)}</h3><p class="log-city">${escapeHtml(area.country_name || '')}</p><div class="meta-row"><span class="meta-chip">${Number(area.radius_km || 5).toFixed(1)} km radius</span></div><div class="log-city" style="margin-top:10px;">Pinned at ${Number(area.latitude).toFixed(3)}, ${Number(area.longitude).toFixed(3)}</div></div>`).join('') : `<div class="card log-card">No saved areas yet.</div>`}
+            </div>
           </div>
         </div>
       </div>
@@ -987,40 +1080,59 @@ function renderProfile() {
   }
   const summary = buildProfileSummary(userId)
   const cloud = mostExploredFoodTypes(userId)
+  const dist = ratingsDistribution(userId)
+  const timeline = discoveryTimeline(userId)
   const recentSpots = state.spots.filter(s => s.user_id === userId).slice(0, 6)
   const recentReviews = state.reviews.filter(r => r.user_id === userId).slice(0, 6)
   return `
     <div class="page-shell section">
       <div class="grid feed-grid">
+        <div class="card profile-card stamp-card">
+          <div class="kicker">Foodie profile</div>
+          <h1 class="hero-title" style="font-size:2.2rem;">${escapeHtml(summary.profile?.display_name || 'Food scout')}</h1>
+          <p class="hero-copy">${escapeHtml(summary.profile?.email || '')}</p>
+          <div class="meta-row" style="margin-top:16px;"><span class="meta-chip">${summary.rank.icon} ${summary.rank.name}</span></div>
+          <div class="mini-stats">
+            <div class="stat-pill"><strong>${summary.spotCount}</strong><span>Spots discovered</span></div>
+            <div class="stat-pill"><strong>${summary.reviewCount}</strong><span>Reviews written</span></div>
+            <div class="stat-pill"><strong>${summary.completed}</strong><span>Crawls completed</span></div>
+          </div>
+          <div class="meta-row"><span class="meta-chip">Unique food types ${summary.uniqueTypes}</span><span class="meta-chip">Followers ${summary.followers}</span><span class="meta-chip">Following ${summary.following}</span><span class="meta-chip">Review signals ${summary.upvotes}</span></div>
+          ${state.user && state.user.id !== userId ? `<div class="meta-row"><button class="btn btn-secondary follow-btn" data-user-id="${userId}">${state.follows.some(f => f.follower_user_id === state.user.id && f.following_user_id === userId) ? 'Following' : 'Follow'}</button></div>` : ''}
+        </div>
+        <div class="card stats-card stamp-card">
+          <div class="section-title"><div><h2>Discovery timeline</h2><p>How this foodie's discoveries stack up over time.</p></div></div>
+          <div class="log-list">
+            ${timeline.length ? timeline.map(item => `<div style="padding:12px 0; border-top:1px solid var(--border);"><strong>${escapeHtml(item.month)}</strong><div class="log-city">${item.count} new spot${item.count > 1 ? 's' : ''} discovered</div></div>`).join('') : `<div class="card log-card">Add spots to start the timeline.</div>`}
+          </div>
+        </div>
+      </div>
+
+      <div class="grid feed-grid" style="margin-top:16px;">
         <div class="side-stack">
-          <div class="card profile-card stamp-card">
-            <div class="kicker">Foodie profile</div>
-            <h1 class="hero-title" style="font-size:2.2rem;">${escapeHtml(summary.profile?.display_name || 'Food scout')}</h1>
-            <p class="hero-copy">${escapeHtml(summary.profile?.email || '')}</p>
-            <div class="meta-row"><span class="meta-chip">${summary.rank.icon} ${summary.rank.name}</span></div>
-            <div class="mini-stats">
-              <div class="stat-pill"><strong>${summary.spotCount}</strong><span>Spots</span></div>
-              <div class="stat-pill"><strong>${summary.reviewCount}</strong><span>Reviews</span></div>
-              <div class="stat-pill"><strong>${summary.completed}</strong><span>Crawls</span></div>
+          <div class="card stats-card stamp-card">
+            <div class="section-title"><div><h2>Tag cloud</h2><p>Most explored food types sized by frequency.</p></div></div>
+            <div class="tag-row">
+              ${cloud.length ? cloud.map(([tag, count]) => `<span class="tag" style="font-size:${0.9 + Math.min(count, 8) * 0.18}rem">${escapeHtml(tag)} x ${count}</span>`).join('') : `<div class="card log-card">Review spots to grow the tag cloud.</div>`}
             </div>
           </div>
           <div class="card stats-card stamp-card">
-            <div class="section-title"><div><h2>Tag cloud</h2><p>Most reviewed food types.</p></div></div>
-            <div class="tag-row">
-              ${cloud.length ? cloud.map(([tag, count]) => `<span class="tag">${escapeHtml(tag)} x ${count}</span>`).join('') : `<div class="card log-card">Review spots to grow the tag cloud.</div>`}
+            <div class="section-title"><div><h2>Ratings distribution</h2><p>Histogram of the ratings given.</p></div></div>
+            <div class="mini-stats">
+              ${Object.entries(dist).map(([rating, count]) => `<div class="stat-pill"><strong>${count}</strong><span>${rating} star</span></div>`).join('')}
             </div>
           </div>
-        </div>
-        <div class="side-stack">
           <div class="card stats-card stamp-card">
             <div class="section-title"><div><h2>Recent discoveries</h2><p>Latest spots found by this foodie.</p></div></div>
             ${recentSpots.length ? recentSpots.map(renderSpotCard).join('') : `<div class="card log-card">No public discoveries yet.</div>`}
           </div>
+        </div>
+        <div class="side-stack">
           <div class="card stats-card stamp-card">
             <div class="section-title"><div><h2>Recent reviews</h2><p>What this foodie has been saying lately.</p></div></div>
             ${recentReviews.length ? recentReviews.map(review => {
               const spot = state.spots.find(s => s.id === review.spot_id)
-              return `<div style="padding:12px 0; border-top:1px solid var(--border);"><strong>${escapeHtml(spot?.name || 'Spot')}</strong><div class="log-city">${fmtDateTime(review.created_at)}</div><p class="log-notes">${escapeHtml(review.review_text || '')}</p></div>`
+              return `<div style="padding:12px 0; border-top:1px solid var(--border);"><strong>${escapeHtml(spot?.name || 'Spot')}</strong><div class="log-city">${fmtDateTime(review.created_at)}</div><p class="log-notes">${escapeHtml(review.review_text || '')}</p><div class="meta-chip">${Math.round(avg([review.taste_rating, review.portion_rating, review.value_rating]))} star</div></div>`
             }).join('') : `<div class="card log-card">No reviews yet.</div>`}
           </div>
         </div>
@@ -1193,7 +1305,7 @@ const saveSpot = safeRun(async event => {
   event.currentTarget.reset()
   await loadData()
   state.nav = 'home'
-  toast(state.geoSource === 'device' ? 'Spot saved.' : 'Spot saved with fallback city coordinates.')
+  toast(state.geoSource === 'device' ? 'Spot saved.' : 'Spot saved with fallback city coordinates. Refresh location to pin exact GPS.')
   render()
 })
 
@@ -1216,7 +1328,7 @@ const saveReview = safeRun(async event => {
   if (error) throw error
   event.currentTarget.reset()
   await loadData()
-  toast('Review saved.')
+  toast('Review dropped.')
   render()
 })
 
@@ -1249,6 +1361,22 @@ const toggleCommentLike = safeRun(async commentId => {
   } else {
     const { error } = await supabase.from(TABLES.commentLikes).insert({ comment_id: commentId })
     if (error) throw error
+  }
+  await loadData()
+  render()
+})
+
+const toggleFollow = safeRun(async targetUserId => {
+  if (!state.user || !targetUserId || targetUserId === state.user.id) return
+  const existing = state.follows.find(f => f.follower_user_id === state.user.id && f.following_user_id === targetUserId)
+  if (existing) {
+    const { error } = await supabase.from(TABLES.follows).delete().eq('id', existing.id)
+    if (error) throw error
+    toast('Unfollowed.')
+  } else {
+    const { error } = await supabase.from(TABLES.follows).insert({ follower_user_id: state.user.id, following_user_id: targetUserId })
+    if (error) throw error
+    toast('Following foodie.')
   }
   await loadData()
   render()
@@ -1381,7 +1509,7 @@ const saveBucketArea = safeRun(async event => {
   }
   event.currentTarget.reset()
   await loadData()
-  toast(state.geoSource === 'device' ? 'Area saved to your bucket list.' : 'Area saved with fallback city coordinates.')
+  toast(state.geoSource === 'device' ? 'Area saved to your bucket list.' : 'Area saved with fallback city coordinates. Refresh location for exact GPS.')
   render()
 })
 
@@ -1389,7 +1517,7 @@ function setupRealtime() {
   try {
     if (state.initializedRealtime) return
     state.initializedRealtime = true
-    supabase.channel('bitemap-live')
+    supabase.channel('wandermap-live')
       .on('postgres_changes', { event: '*', schema: 'public', table: TABLES.spots }, async () => { await loadData(); render() })
       .on('postgres_changes', { event: '*', schema: 'public', table: TABLES.reviews }, async () => { await loadData(); render() })
       .on('postgres_changes', { event: '*', schema: 'public', table: TABLES.crawls }, async () => { await loadData(); render() })
@@ -1430,12 +1558,13 @@ function bindEvents() {
       }
       await fetchCountryAndWeather()
       render()
-      toast(state.geoSource === 'device' ? 'Location refreshed.' : 'Location blocked, using Los Angeles fallback.')
+      toast(state.geoSource === 'device' ? 'Location refreshed.' : 'Location blocked, so the app is using Los Angeles fallback.')
     }))
 
     document.querySelectorAll('[data-nav]').forEach(btn => btn.addEventListener('click', () => setNav(btn.dataset.nav)))
     document.querySelectorAll('.open-spot').forEach(btn => btn.addEventListener('click', () => openSpot(btn.dataset.spotId)))
     document.querySelectorAll('.open-profile').forEach(btn => btn.addEventListener('click', () => openProfile(btn.dataset.userId)))
+    document.querySelectorAll('.follow-btn').forEach(btn => btn.addEventListener('click', () => toggleFollow(btn.dataset.userId)))
     document.querySelectorAll('.clone-crawl').forEach(btn => btn.addEventListener('click', () => cloneCrawl(btn.dataset.crawlId)))
     document.querySelectorAll('.mark-stop').forEach(btn => btn.addEventListener('click', () => markCloneStopVisited(btn.dataset.cloneStopId)))
     document.querySelectorAll('.complete-crawl').forEach(btn => btn.addEventListener('click', () => {
