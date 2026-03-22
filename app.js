@@ -201,16 +201,6 @@ function mostExploredCities(limit = 8) {
   return Object.values(counts).sort((a, b) => b.count - a.count).slice(0, limit)
 }
 
-function mostActiveTravelers(limit = 8) {
-  return state.profiles
-    .map(profile => {
-      const summary = travelerSummary(profile.user_id)
-      return { profile, ...summary }
-    })
-    .sort((a, b) => (b.totalLogs + b.upvotesReceived) - (a.totalLogs + a.upvotesReceived))
-    .slice(0, limit)
-}
-
 function weatherLabel(code) {
   if (code == null) return 'Unknown'
   if ([0].includes(code)) return 'Clear'
@@ -233,19 +223,20 @@ function looksLikeStructuredPayload(text = '') {
   const value = String(text || '').trim()
   if (!value) return false
   if ((value.startsWith('{') && value.endsWith('}')) || (value.startsWith('[') && value.endsWith(']'))) return true
-  return /"cca2"|"cca3"|"capital"|"altSpellings"|"googleMaps"|"timezones"|"currencies"|"languages"|"latlng"|"translations"|"demonyms"/i.test(value)
+  return /"cca2"|"cca3"|"capital"|"altSpellings"|"googleMaps"|"timezones"|"currencies"|"languages"|"latlng"|"translations"|"demonyms"|"flags"|"coatOfArms"|"postalCode"/i.test(value)
 }
 
 function cleanBucketNotes(value = '') {
   const text = String(value || '').trim()
-  if (!text) return ''
-  if (looksLikeStructuredPayload(text)) return ''
+  if (!text || looksLikeStructuredPayload(text)) return ''
   return clampText(text, 180)
 }
 
-function defaultBucketNote(item) {
-  const parts = [item?.city_name, item?.country_name].filter(Boolean)
-  return parts.length ? `Saved trip idea for ${parts.join(', ')}.` : 'Saved destination details.'
+function sanitizeBucketPayload(item = {}) {
+  return {
+    ...item,
+    notes: cleanBucketNotes(item?.notes || '')
+  }
 }
 
 async function fetchJson(url) {
@@ -323,56 +314,23 @@ async function fetchWeather(city) {
 
 async function ensureAppUser(user) {
   if (!user?.id) return null
-
-  const { data: existing, error: existingError } = await supabase
+  const { data: existing } = await supabase
     .from(TABLES.appUsers)
     .select('*')
     .eq('user_id', user.id)
     .maybeSingle()
-
-  if (existingError && !/no rows returned|pgrst116/i.test(String(existingError.message || ''))) {
-    throw existingError
-  }
-
   if (existing) {
     state.appUser = existing
     return existing
   }
-
   const payload = {
     user_id: user.id,
     email: user.email,
     display_name: user.email?.split('@')[0] || 'Traveler',
-    home_city: DEFAULT_CITY.city_name,
-    favorite_tag: 'culture'
+    avatar_emoji: ':compass:'
   }
-
-  const { data, error } = await supabase
-    .from(TABLES.appUsers)
-    .insert(payload)
-    .select()
-    .single()
-
-  if (error) {
-    const { data: retryExisting } = await supabase
-      .from(TABLES.appUsers)
-      .select('*')
-      .eq('user_id', user.id)
-      .maybeSingle()
-
-    if (retryExisting) {
-      state.appUser = retryExisting
-      return retryExisting
-    }
-
-    if (/row-level security|permission denied/i.test(String(error.message || ''))) {
-      state.appUser = payload
-      return payload
-    }
-
-    throw error
-  }
-
+  const { data, error } = await supabase.from(TABLES.appUsers).insert(payload).select().single()
+  if (error) throw error
   state.appUser = data
   return data
 }
@@ -395,17 +353,50 @@ async function loadData() {
   state.logs = logsRes.data || []
   state.comments = commentsRes.data || []
   state.upvotes = upvotesRes.data || []
-  state.bucketList = bucketRes.data || []
+  state.bucketList = (bucketRes.data || []).map(sanitizeBucketPayload)
   state.profiles = profilesRes.data || []
+}
+
+function renderTopbar() {
+  const myLogCount = state.logs.filter(log => log.user_id === state.user?.id).length
+  const myBucketCount = state.bucketList.filter(item => item.user_id === state.user?.id).length
+  return `
+    <header class="topbar">
+      <div class="topbar-inner">
+        <div class="brand">
+          <div class="brand-icon"><i class="fa-solid fa-earth-americas"></i></div>
+          <div class="brand-copy">
+            <h1>WanderMap</h1>
+            <p>Save cities, keep bucket plans, and post short travel logs without the clutter.</p>
+          </div>
+        </div>
+        <div class="top-actions">
+          <div class="top-summary">
+            <span class="meta-chip">${myBucketCount} bucket saves</span>
+            <span class="meta-chip">${myLogCount} travel logs</span>
+          </div>
+          <button class="btn btn-secondary" id="sign-out">Sign out</button>
+        </div>
+      </div>
+      <div class="nav-tabs">
+        ${[
+          ['home', 'Home'],
+          ['city', 'City'],
+          ['bucket', 'Bucket List'],
+          ['profile', 'Profile']
+        ].map(([tab, label]) => `<button class="nav-tab ${state.nav === tab ? 'active' : ''}" data-nav="${tab}">${label}</button>`).join('')}
+      </div>
+    </header>
+  `
 }
 
 function renderAuth() {
   return `
     <div class="auth-wrap">
-      <div class="card stamp-card auth-card">
-        <div class="brand-mark"><i class="fa-solid fa-earth-europe"></i></div>
+      <div class="card auth-card stamp-card">
+        <div class="brand-mark"><i class="fa-solid fa-compass"></i></div>
         <h1 class="title">WanderMap</h1>
-        <p class="subtitle">Track city memories, save future destinations, and share quick travel stories with a clean personal explorer dashboard.</p>
+        <p class="subtitle">Track cities you love, save future destinations, and post quick travel stories.</p>
         <form id="auth-form" class="form-stack" style="margin-top:18px;">
           <div>
             <label class="label">Email</label>
@@ -416,7 +407,7 @@ function renderAuth() {
             <input class="input" type="password" name="password" required minlength="6" ${state.authBusy ? 'disabled' : ''}>
           </div>
           <div class="auth-error">${escapeHtml(state.authError || '')}</div>
-          <button class="btn btn-primary" type="submit" style="width:100%;">${state.authBusy ? escapeHtml(state.authMessage || 'Working...') : state.authMode === 'signup' ? 'Create account' : 'Sign in'}</button>
+          <button class="btn btn-primary" type="submit" style="width:100%;" ${state.authBusy ? 'disabled' : ''}>${state.authBusy ? (state.authMessage || 'Working...') : state.authMode === 'signup' ? 'Create account' : 'Sign in'}</button>
         </form>
         <button class="auth-switch" id="switch-auth">${state.authMode === 'signup' ? 'Already have an account? <strong>Sign in</strong>' : `Don't have an account? <strong>Sign up</strong>`}</button>
       </div>
@@ -427,113 +418,16 @@ function renderAuth() {
 function renderLoading() {
   return `
     <div class="loading-screen">
-      <div class="card stamp-card loading-card">
-        <div class="loading-media" style="background-image:url('${escapeHtml(state.loadingPhoto?.image || '')}')">
+      <div class="card loading-card stamp-card">
+        <div class="loading-media" style="background-image:${state.loadingPhoto ? `url('${escapeHtml(state.loadingPhoto)}')` : 'none'};">
           <div class="loading-overlay"></div>
         </div>
         <div class="loading-copy">
-          <div class="kicker">Daily inspiration</div>
-          <h1 class="title" style="text-align:left;">${escapeHtml(state.loadingPhoto?.title || 'Adventure starts here')}</h1>
-          <p class="subtitle" style="text-align:left;">${escapeHtml(state.loadingPhoto?.explanation || 'Loading your city explorer...')}</p>
+          <div class="kicker">Loading your next trip</div>
+          <h1 class="hero-title" style="font-size:2.2rem;">WanderMap</h1>
+          <p class="hero-copy">Saving cities, syncing your bucket list, and pulling in live city details.</p>
         </div>
       </div>
-    </div>
-  `
-}
-
-function renderTopbar() {
-  const mySummary = travelerSummary(state.user?.id)
-  return `
-    <div class="topbar">
-      <div class="topbar-inner">
-        <div class="brand">
-          <div class="brand-icon"><i class="fa-solid fa-compass"></i></div>
-          <div class="brand-copy">
-            <h1>WanderMap</h1>
-            <p>Track city stories, save future destinations, and revisit where you want to go next.</p>
-          </div>
-        </div>
-        <div class="top-actions">
-          <div class="top-summary">
-            <span class="meta-chip">${mySummary.totalLogs} logs</span>
-            <span class="meta-chip">${state.bucketList.length} saved cities</span>
-          </div>
-          <button class="btn btn-secondary" id="sign-out">Sign out</button>
-        </div>
-      </div>
-      <div class="nav-tabs">
-        ${[
-          ['home', 'Home'],
-          ['discover', 'Discover'],
-          ['bucket', 'Bucket List'],
-          ['profile', 'Profile'],
-          ['new-log', 'New Log']
-        ].map(([key, label]) => `<button class="nav-tab ${state.nav === key ? 'active' : ''}" data-nav="${key}">${label}</button>`).join('')}
-      </div>
-    </div>
-  `
-}
-
-function renderHome() {
-  const trending = topTrendingLogs(6)
-  const activeTravelers = mostActiveTravelers(5)
-  return `
-    <div class="page-shell">
-      <section class="hero">
-        <div class="hero-grid">
-          <div class="card stamp-card hero-main">
-            <div class="kicker">City stories</div>
-            <h1 class="hero-title">Keep your travel memories and future trip ideas in one clean place.</h1>
-            <p class="hero-copy">Search a city, log what stood out, save destinations for later, and browse what other travelers are sharing right now.</p>
-            <div class="hero-actions">
-              <button class="btn btn-primary" data-nav="discover">Explore cities</button>
-              <button class="btn btn-secondary" data-nav="new-log">Add a log</button>
-            </div>
-          </div>
-          <div class="card stamp-card hero-side">
-            <div class="kicker">Your progress</div>
-            <div class="mini-stats">
-              <div class="stat-pill"><strong>${travelerSummary(state.user?.id).cityCount}</strong><span>Cities logged</span></div>
-              <div class="stat-pill"><strong>${travelerSummary(state.user?.id).upvotesReceived}</strong><span>Upvotes earned</span></div>
-              <div class="stat-pill"><strong>${travelerSummary(state.user?.id).rank.name}</strong><span>Traveler rank</span></div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section class="section">
-        <div class="section-title">
-          <div>
-            <h2>Trending logs</h2>
-            <p>Popular recent stories from the community.</p>
-          </div>
-        </div>
-        <div class="log-list">
-          ${trending.length ? trending.map(renderLogCard).join('') : `<div class="card log-card">No public logs yet.</div>`}
-        </div>
-      </section>
-
-      <section class="section">
-        <div class="section-title">
-          <div>
-            <h2>Active travelers</h2>
-            <p>People sharing the most city stories.</p>
-          </div>
-        </div>
-        <div class="log-list">
-          ${activeTravelers.map(item => `
-            <div class="card log-card">
-              <div class="log-head">
-                <div>
-                  <h3>${escapeHtml(item.profile?.display_name || 'Traveler')}</h3>
-                  <div class="log-city">${escapeHtml(item.rank.name)} � ${item.cityCount} cities</div>
-                </div>
-                <button class="btn btn-secondary open-profile" data-user-id="${item.profile?.user_id || ''}">Open profile</button>
-              </div>
-            </div>
-          `).join('')}
-        </div>
-      </section>
     </div>
   `
 }
@@ -541,130 +435,175 @@ function renderHome() {
 function renderLogCard(log) {
   const profile = profileFor(log.user_id)
   return `
-    <div class="card log-card stamp-card">
+    <article class="card log-card stamp-card">
       <div class="log-head">
         <div>
-          <h3>${escapeHtml(log.title || 'Untitled log')}</h3>
-          <div class="log-city">${escapeHtml(log.city_name || 'Unknown city')}, ${escapeHtml(log.country_name || '')} � by ${escapeHtml(profile?.display_name || 'Traveler')}</div>
+          <strong>${escapeHtml(log.title || 'Untitled log')}</strong>
+          <div class="log-city">${escapeHtml(log.city_name || '')}, ${escapeHtml(log.country_name || '')}</div>
         </div>
-        <div class="meta-chip">${fmtDate(log.created_at)}</div>
+        <div class="meta-chip">${Number(log.rating || 0).toFixed(1)} / 5</div>
       </div>
-      <p class="log-notes">${escapeHtml(clampText(log.notes || '', 280))}</p>
+      <p class="log-notes">${escapeHtml(clampText(log.notes || '', 260))}</p>
       <div class="tag-row">
         ${(Array.isArray(log.tags) ? log.tags : []).map(tag => `<span class="tag">${escapeHtml(tag)}</span>`).join('')}
       </div>
       <div class="meta-row">
+        <span class="meta-chip">By ${escapeHtml(profile?.display_name || 'Traveler')}</span>
+        <span class="meta-chip">${fmtDateTime(log.created_at)}</span>
         <span class="meta-chip">${upvoteCountForLog(log.id)} upvotes</span>
-        <span class="meta-chip">${commentsForLog(log.id).length} comments</span>
-        <span class="meta-chip">${Number(log.rating || 0).toFixed(1)} / 5</span>
       </div>
-      <div class="hero-actions">
-        <button class="btn btn-primary open-log" data-log-id="${log.id}">Open</button>
-        <button class="btn btn-secondary toggle-upvote" data-log-id="${log.id}">${hasUpvoted(log.id) ? 'Upvoted' : 'Upvote'}</button>
+      <div class="meta-row">
+        <button class="btn btn-secondary open-log" data-log-id="${log.id}">Open</button>
+        <button class="btn btn-ghost upvote-log" data-log-id="${log.id}">${hasUpvoted(log.id) ? 'Upvoted' : 'Upvote'}</button>
       </div>
-    </div>
+    </article>
   `
 }
 
-function renderDiscover() {
+function renderHome() {
+  const trending = topTrendingLogs(6)
+  const cities = mostExploredCities(6)
   return `
-    <div class="page-shell section">
-      <div class="grid feed-grid">
-        <div class="side-stack">
-          <div class="card stamp-card city-search-card">
-            <div class="section-title">
-              <div>
-                <h2>Search a city</h2>
-                <p>Pick a place to view weather, country details, and recent public logs.</p>
-              </div>
-            </div>
-            <div class="city-search-row">
-              <input class="input" id="city-query" placeholder="Lisbon, Tokyo, Mexico City..." value="${escapeHtml(state.cityQuery)}">
-              <button class="btn btn-primary" id="search-city-btn">Search</button>
-            </div>
-            <div class="city-results">
-              ${state.cityResults.map((city, index) => `
-                <button class="city-result" data-city-index="${index}">
-                  <strong>${escapeHtml(city.city_name)}</strong>
-                  <div class="log-city">${escapeHtml(city.admin1 ? `${city.admin1}, ` : '')}${escapeHtml(city.country_name || '')}</div>
-                </button>
-              `).join('') || `<div class="meta-chip">Search for a city to get started.</div>`}
+    <div class="page-shell">
+      <section class="hero">
+        <div class="hero-grid">
+          <div class="card hero-main stamp-card">
+            <div class="kicker">City explorer</div>
+            <h1 class="hero-title">Save places you want to go and remember the trips that mattered.</h1>
+            <p class="hero-copy">Search any city, add it to your bucket list, and keep short travel logs with photos, ratings, and notes.</p>
+            <div class="hero-actions">
+              <button class="btn btn-primary" data-nav="city">Search a city</button>
+              <button class="btn btn-secondary" data-nav="bucket">Open bucket list</button>
             </div>
           </div>
-
-          ${state.selectedCity ? renderSelectedCity() : ''}
-        </div>
-
-        <div class="side-stack">
-          <div class="card stamp-card stats-card">
-            <div class="section-title">
-              <div>
-                <h2>Most explored cities</h2>
-                <p>Based on public logs.</p>
-              </div>
-            </div>
+          <div class="card hero-side stamp-card">
+            <div class="section-title"><div><h2>Top explored cities</h2><p>Where the community is posting most.</p></div></div>
             <div class="log-list">
-              ${mostExploredCities().map(city => `
-                <div class="card log-card">
-                  <strong>${escapeHtml(city.city_name)}</strong>
-                  <div class="log-city">${escapeHtml(city.country_name || '')}</div>
-                  <div class="meta-row"><span class="meta-chip">${city.count} logs</span></div>
-                </div>
-              `).join('') || `<div class="meta-chip">No city data yet.</div>`}
+              ${cities.length ? cities.map(city => `<div class="bucket-item"><strong>${escapeHtml(city.city_name)}</strong><p>${escapeHtml(city.country_name)} � ${city.count} logs</p></div>`).join('') : `<div class="bucket-item"><p>No city activity yet.</p></div>`}
             </div>
           </div>
         </div>
-      </div>
+      </section>
+
+      <section class="section">
+        <div class="section-title"><div><h2>Trending travel logs</h2><p>Recent public stories from travelers.</p></div></div>
+        <div class="log-list">
+          ${trending.length ? trending.map(renderLogCard).join('') : `<div class="card log-card">No public logs yet.</div>`}
+        </div>
+      </section>
     </div>
   `
 }
 
-function renderSelectedCity() {
-  const city = state.selectedCity
+function renderCityPage() {
+  const city = state.selectedCity || DEFAULT_CITY
   const country = state.selectedCountry
   const weather = state.selectedWeather
   const cityLogs = logsForCity(city.city_name, city.country_code)
+
   return `
-    <div class="card stamp-card city-search-card">
-      <div class="section-title">
-        <div>
-          <h2>${escapeHtml(city.city_name)}, ${escapeHtml(city.country_name || '')}</h2>
-          <p>Current city details and public traveler logs.</p>
+    <div class="page-shell section">
+      <div class="city-layout">
+        <div class="side-stack">
+          <div class="card city-search-card stamp-card">
+            <div class="section-title"><div><h2>Search city</h2><p>Pick a city to view details and save it.</p></div></div>
+            <div class="city-search-row">
+              <input class="input" id="city-query" value="${escapeHtml(state.cityQuery)}" placeholder="Search Lisbon, Tokyo, Mexico City...">
+              <button class="btn btn-primary" id="city-search-btn">Search</button>
+            </div>
+            <div class="city-results">
+              ${state.cityResults.map((item, index) => `<button class="city-result" data-city-index="${index}"><strong>${escapeHtml(item.city_name)}</strong><div class="log-city">${escapeHtml(item.admin1 ? `${item.admin1}, ` : '')}${escapeHtml(item.country_name)}</div></button>`).join('')}
+            </div>
+          </div>
+
+          <div class="card stamp-card" style="padding:0; overflow:hidden;">
+            <div class="city-banner">
+              <div class="parallax-layer parallax-grid"></div>
+              <div class="parallax-layer parallax-blobs"></div>
+              <div class="parallax-layer parallax-icon"><i class="fa-solid fa-location-dot"></i></div>
+              <div class="city-banner-content">
+                <div class="kicker">Selected city</div>
+                <h1 class="hero-title" style="font-size:2.5rem;">${escapeHtml(city.city_name || '')}</h1>
+                <p class="hero-copy">${escapeHtml(city.country_name || '')}${country?.capital?.length ? ` � Capital: ${country.capital[0]}` : ''}</p>
+                <div class="weather-grid">
+                  <div class="weather-box"><strong>${weather?.currentTemp ?? '--'} deg</strong><span class="log-city">Now</span></div>
+                  <div class="weather-box"><strong>${weather ? weatherLabel(weather.weatherCode) : '--'}</strong><span class="log-city">Weather</span></div>
+                  <div class="weather-box"><strong>${weather?.wind ?? '--'}</strong><span class="log-city">Wind km/h</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card form-card stamp-card">
+            <div class="section-title"><div><h2>Save this city</h2><p>Add it to your bucket list for later.</p></div></div>
+            <form id="bucket-form" class="form-stack">
+              <div>
+                <label class="label">Quick note</label>
+                <textarea class="textarea" name="notes" placeholder="Why do you want to visit? Food, views, nightlife, museums..."></textarea>
+              </div>
+              <button class="btn btn-primary" type="submit">Save city</button>
+            </form>
+          </div>
         </div>
-      </div>
-      <div class="meta-row">
-        ${weather ? `<span class="meta-chip">${weatherLabel(weather.weatherCode)} � ${Math.round(weather.currentTemp)}�</span>` : ''}
-        ${weather ? `<span class="meta-chip">High ${Math.round(weather.high)}� / Low ${Math.round(weather.low)}�</span>` : ''}
-        ${country?.capital?.[0] ? `<span class="meta-chip">Capital ${escapeHtml(country.capital[0])}</span>` : ''}
-        ${country?.region ? `<span class="meta-chip">${escapeHtml(country.region)}</span>` : ''}
-      </div>
-      <div class="log-list" style="margin-top:16px;">
-        ${cityLogs.length ? cityLogs.map(renderLogCard).join('') : `<div class="card log-card">No public logs for this city yet.</div>`}
+
+        <div class="side-stack">
+          <div class="card form-card stamp-card">
+            <div class="section-title"><div><h2>Add travel log</h2><p>Share a short story or memory from this city.</p></div></div>
+            <form id="log-form" class="form-stack">
+              <div>
+                <label class="label">Title</label>
+                <input class="input" name="title" required placeholder="Sunset tram ride and rooftop dinner">
+              </div>
+              <div>
+                <label class="label">Notes</label>
+                <textarea class="textarea" name="notes" required placeholder="What happened, what you loved, what people should know."></textarea>
+              </div>
+              <div class="two-col">
+                <div>
+                  <label class="label">Rating</label>
+                  <select class="select" name="rating">
+                    ${[1,2,3,4,5].map(n => `<option value="${n}">${n}</option>`).join('')}
+                  </select>
+                </div>
+                <div>
+                  <label class="label">Tag</label>
+                  <select class="select" name="tag">
+                    ${TAGS.map(tag => `<option value="${tag}">${tag}</option>`).join('')}
+                  </select>
+                </div>
+              </div>
+              <button class="btn btn-primary" type="submit">Save travel log</button>
+            </form>
+          </div>
+
+          <div class="card stats-card stamp-card">
+            <div class="section-title"><div><h2>City logs</h2><p>${cityLogs.length} public logs for this city.</p></div></div>
+            <div class="log-list">
+              ${cityLogs.length ? cityLogs.map(renderLogCard).join('') : `<div class="bucket-item"><p>No logs for this city yet. Add the first one.</p></div>`}
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   `
 }
 
-function renderBucketList() {
+function renderBucketPage() {
+  const mine = state.bucketList.filter(item => item.user_id === state.user?.id)
   return `
     <div class="page-shell section">
-      <div class="section-title">
-        <div>
-          <h2>Bucket list</h2>
-          <p>Saved cities you want to explore next.</p>
-        </div>
-      </div>
-      <div class="log-list">
-        ${state.bucketList.length ? state.bucketList.map(item => {
-          const note = cleanBucketNotes(item.notes)
+      <div class="section-title"><div><h2>Your bucket list</h2><p>Saved cities you want to remember.</p></div></div>
+      <div class="bucket-list">
+        ${mine.length ? mine.map(item => {
+          const cleanNote = cleanBucketNotes(item.notes)
           return `
             <div class="card bucket-card stamp-card">
-              <div class="kicker">${escapeHtml(item.country_code || '')}</div>
-              <h3>${escapeHtml(item.city_name || 'Saved city')}</h3>
-              ${note ? `<p class="log-notes">${escapeHtml(note)}</p>` : ''}
+              <strong>${escapeHtml(item.city_name || 'Saved city')}</strong>
+              <div class="log-city">${escapeHtml(item.country_name || '')}</div>
+              ${cleanNote ? `<p>${escapeHtml(cleanNote)}</p>` : ''}
               <div class="meta-row">
-                <span class="meta-chip">${escapeHtml(item.country_name || 'Unknown country')}</span>
                 <span class="meta-chip">Saved ${fmtDate(item.created_at)}</span>
+                <button class="btn btn-ghost delete-bucket" data-bucket-id="${item.id}">Remove</button>
               </div>
             </div>
           `
@@ -675,165 +614,25 @@ function renderBucketList() {
 }
 
 function renderProfile() {
-  const summary = travelerSummary(state.currentProfileUserId || state.user?.id)
-  const profile = profileFor(state.currentProfileUserId || state.user?.id) || state.appUser
+  const summary = travelerSummary(state.user?.id)
   return `
     <div class="page-shell section">
-      <div class="grid feed-grid">
-        <div class="card stamp-card profile-card">
+      <div class="profile-hero">
+        <div class="card profile-card stamp-card">
           <div class="kicker">Traveler profile</div>
-          <h1 class="hero-title">${escapeHtml(profile?.display_name || 'Traveler')}</h1>
-          <p class="hero-copy">${escapeHtml(profile?.email || state.user?.email || '')}</p>
-          <div class="mini-stats">
-            <div class="stat-pill"><strong>${summary.totalLogs}</strong><span>Logs</span></div>
-            <div class="stat-pill"><strong>${summary.cityCount}</strong><span>Cities</span></div>
-            <div class="stat-pill"><strong>${summary.upvotesReceived}</strong><span>Upvotes</span></div>
+          <h1 class="hero-title" style="font-size:2.3rem;">${escapeHtml(state.appUser?.display_name || state.user?.email?.split('@')[0] || 'Traveler')}</h1>
+          <p class="hero-copy">${escapeHtml(state.user?.email || '')}</p>
+          <div class="weather-grid" style="margin-top:18px;">
+            <div class="weather-box"><strong>${summary.totalLogs}</strong><span class="log-city">Logs</span></div>
+            <div class="weather-box"><strong>${summary.cityCount}</strong><span class="log-city">Cities</span></div>
+            <div class="weather-box"><strong>${summary.upvotesReceived}</strong><span class="log-city">Upvotes</span></div>
           </div>
         </div>
-        <div class="card stamp-card stats-card">
-          <div class="section-title">
-            <div>
-              <h2>${escapeHtml(summary.rank.name)}</h2>
-              <p>Current traveler rank based on public activity.</p>
-            </div>
-          </div>
+        <div class="card stats-card stamp-card">
+          <div class="section-title"><div><h2>Recent travel logs</h2><p>Your latest activity.</p></div></div>
           <div class="log-list">
-            ${summary.userLogs.slice(0, 5).map(renderLogCard).join('') || `<div class="card log-card">No logs yet.</div>`}
+            ${summary.userLogs.length ? summary.userLogs.slice(0, 5).map(renderLogCard).join('') : `<div class="bucket-item"><p>No travel logs yet.</p></div>`}
           </div>
-        </div>
-      </div>
-    </div>
-  `
-}
-
-function renderNewLog() {
-  const city = state.selectedCity || DEFAULT_CITY
-  return `
-    <div class="page-shell section">
-      <div class="grid feed-grid">
-        <div class="card stamp-card form-card">
-          <div class="section-title">
-            <div>
-              <h2>Add a travel log</h2>
-              <p>Share a short memory, recommendation, or tip for a city.</p>
-            </div>
-          </div>
-          <form id="log-form" class="form-stack">
-            <div>
-              <label class="label">Title</label>
-              <input class="input" name="title" required placeholder="Sunset tram ride and pastel de nata stop">
-            </div>
-            <div>
-              <label class="label">City</label>
-              <input class="input" name="city_name" required value="${escapeHtml(city.city_name || '')}">
-            </div>
-            <div>
-              <label class="label">Country</label>
-              <input class="input" name="country_name" required value="${escapeHtml(city.country_name || '')}">
-            </div>
-            <div>
-              <label class="label">Country code</label>
-              <input class="input" name="country_code" required value="${escapeHtml(city.country_code || '')}">
-            </div>
-            <div>
-              <label class="label">Notes</label>
-              <textarea class="textarea" name="notes" required placeholder="What stood out, what to do, and what you'd recommend to someone else."></textarea>
-            </div>
-            <div>
-              <label class="label">Tags</label>
-              <div class="tag-row">
-                ${TAGS.map(tag => `<label class="tag"><input type="checkbox" name="tags" value="${tag}" style="margin-right:8px;">${tag}</label>`).join('')}
-              </div>
-            </div>
-            <div>
-              <label class="label">Rating</label>
-              <select class="select" name="rating">${[1,2,3,4,5].map(n => `<option value="${n}">${n}</option>`).join('')}</select>
-            </div>
-            <button class="btn btn-primary" type="submit">Save log</button>
-          </form>
-        </div>
-        <div class="side-stack">
-          <div class="card stamp-card bucket-card">
-            <div class="section-title">
-              <div>
-                <h2>Save current city</h2>
-                <p>Add the selected city to your bucket list.</p>
-              </div>
-            </div>
-            <form id="bucket-form" class="form-stack">
-              <div>
-                <label class="label">City</label>
-                <input class="input" name="city_name" required value="${escapeHtml(city.city_name || '')}">
-              </div>
-              <div>
-                <label class="label">Country</label>
-                <input class="input" name="country_name" required value="${escapeHtml(city.country_name || '')}">
-              </div>
-              <div>
-                <label class="label">Country code</label>
-                <input class="input" name="country_code" required value="${escapeHtml(city.country_code || '')}">
-              </div>
-              <div>
-                <label class="label">Note</label>
-                <textarea class="textarea" name="notes" placeholder="Why do you want to visit this city?"></textarea>
-              </div>
-              <button class="btn btn-secondary" type="submit">Save to bucket list</button>
-            </form>
-          </div>
-        </div>
-      </div>
-    </div>
-  `
-}
-
-function renderLogDetail() {
-  const log = state.logs.find(item => item.id === state.currentLogId)
-  if (!log) return `<div class="page-shell section"><div class="card log-card">Log not found.</div></div>`
-  const profile = profileFor(log.user_id)
-  const comments = commentsForLog(log.id)
-  return `
-    <div class="page-shell section">
-      <div class="card stamp-card log-card">
-        <div class="log-head">
-          <div>
-            <h2>${escapeHtml(log.title || 'Untitled log')}</h2>
-            <div class="log-city">${escapeHtml(log.city_name || '')}, ${escapeHtml(log.country_name || '')} � ${escapeHtml(profile?.display_name || 'Traveler')}</div>
-          </div>
-          <div class="meta-chip">${fmtDateTime(log.created_at)}</div>
-        </div>
-        <p class="log-notes" style="-webkit-line-clamp:unset; display:block;">${escapeHtml(log.notes || '')}</p>
-        <div class="tag-row">${(Array.isArray(log.tags) ? log.tags : []).map(tag => `<span class="tag">${escapeHtml(tag)}</span>`).join('')}</div>
-        <div class="meta-row">
-          <span class="meta-chip">${upvoteCountForLog(log.id)} upvotes</span>
-          <span class="meta-chip">${Number(log.rating || 0).toFixed(1)} / 5</span>
-        </div>
-        <div class="hero-actions">
-          <button class="btn btn-primary toggle-upvote" data-log-id="${log.id}">${hasUpvoted(log.id) ? 'Upvoted' : 'Upvote'}</button>
-        </div>
-      </div>
-
-      <div class="card stamp-card form-card" style="margin-top:16px;">
-        <div class="section-title">
-          <div>
-            <h2>Comments</h2>
-            <p>Join the conversation.</p>
-          </div>
-        </div>
-        <form id="comment-form" class="form-stack">
-          <div>
-            <label class="label">Comment</label>
-            <textarea class="textarea" name="comment_text" required placeholder="Add a helpful comment or question."></textarea>
-          </div>
-          <button class="btn btn-primary" type="submit">Post comment</button>
-        </form>
-        <div class="log-list" style="margin-top:16px;">
-          ${comments.length ? comments.map(comment => `
-            <div class="card log-card">
-              <strong>${escapeHtml(comment.profile?.display_name || 'Traveler')}</strong>
-              <div class="log-city">${fmtDateTime(comment.created_at)}</div>
-              <p class="log-notes" style="-webkit-line-clamp:unset; display:block;">${escapeHtml(comment.comment_text || '')}</p>
-            </div>
-          `).join('') : `<div class="card log-card">No comments yet.</div>`}
         </div>
       </div>
     </div>
@@ -843,48 +642,50 @@ function renderLogDetail() {
 function renderApp() {
   let body = ''
   if (state.nav === 'home') body = renderHome()
-  if (state.nav === 'discover') body = renderDiscover()
-  if (state.nav === 'bucket') body = renderBucketList()
+  if (state.nav === 'city') body = renderCityPage()
+  if (state.nav === 'bucket') body = renderBucketPage()
   if (state.nav === 'profile') body = renderProfile()
-  if (state.nav === 'new-log') body = renderNewLog()
-  if (state.nav === 'log') body = renderLogDetail()
 
   return `
     ${renderTopbar()}
-    ${state.notice ? `<div class="page-shell" style="padding-top:14px;"><div class="card" style="padding:14px 18px;">${escapeHtml(state.notice)}</div></div>` : ''}
+    ${state.notice ? `<div class="notice"><div class="notice-card">${escapeHtml(state.notice)}</div></div>` : ''}
     ${body}
   `
 }
 
 function render() {
-  if (!state.user && state.screen !== 'loading') {
-    app.innerHTML = renderAuth()
-    bindEvents()
-    return
-  }
-
-  if (state.screen === 'loading') {
-    app.innerHTML = renderLoading()
-    return
-  }
-
-  app.innerHTML = renderApp()
+  if (state.screen === 'loading') app.innerHTML = renderLoading()
+  else if (!state.user) app.innerHTML = renderAuth()
+  else app.innerHTML = renderApp()
   bindEvents()
+}
+
+async function enterAppWithSession(session) {
+  state.session = session || null
+  state.user = session?.user || null
+  if (!state.user) {
+    state.appUser = null
+    state.screen = 'auth'
+    state.nav = 'home'
+    render()
+    return
+  }
+  await ensureAppUser(state.user)
+  await loadData()
+  state.screen = 'app'
+  render()
 }
 
 const handleAuthSubmit = safeRun(async event => {
   event.preventDefault()
   if (state.authBusy) return
-
   const form = new FormData(event.currentTarget)
   const email = String(form.get('email') || '').trim().toLowerCase()
   const password = String(form.get('password') || '').trim()
-
-  state.authBusy = true
   state.authError = ''
+  state.authBusy = true
   state.authMessage = state.authMode === 'signup' ? 'Creating account...' : 'Signing in...'
   render()
-
   try {
     if (state.authMode === 'signup') {
       const { data, error } = await supabase.auth.signUp({
@@ -892,41 +693,19 @@ const handleAuthSubmit = safeRun(async event => {
         password,
         options: { emailRedirectTo: 'https://sling-gogiapp.web.app/email-confirmed.html' }
       })
-
-      if (error && /already been registered|user already registered/i.test(String(error.message || ''))) {
-        const signIn = await supabase.auth.signInWithPassword({ email, password })
-        if (signIn.error) {
-          state.authError = normalizeAuthMessage(signIn.error.message)
-          return
-        }
-        await enterApp(signIn.data.session)
-        return
+      if (error) throw error
+      if (data?.session) await enterAppWithSession(data.session)
+      else {
+        state.authMode = 'signin'
+        toast('Check your email to confirm your account, then sign in.')
       }
-
-      if (error) {
-        state.authError = normalizeAuthMessage(error.message)
-        return
-      }
-
-      if (data?.session) {
-        await enterApp(data.session)
-        return
-      }
-
-      state.pendingEmail = email
-      state.screen = 'auth'
-      state.authMode = 'signin'
-      toast(`Check ${email} for your confirmation link, then sign in.`)
       return
     }
-
     const { data, error } = await supabase.auth.signInWithPassword({ email, password })
-    if (error) {
-      state.authError = normalizeAuthMessage(error.message)
-      return
-    }
-
-    await enterApp(data.session)
+    if (error) throw error
+    await enterAppWithSession(data.session)
+  } catch (error) {
+    state.authError = normalizeAuthMessage(error?.message)
   } finally {
     state.authBusy = false
     state.authMessage = ''
@@ -936,81 +715,78 @@ const handleAuthSubmit = safeRun(async event => {
 
 const signOut = safeRun(async () => {
   await supabase.auth.signOut()
-  state.user = null
-  state.session = null
-  state.appUser = null
-  state.nav = 'home'
-  render()
+  await enterAppWithSession(null)
 })
 
-const searchCity = safeRun(async () => {
+const runCitySearch = safeRun(async () => {
   state.cityResults = await searchCities(state.cityQuery)
   render()
 })
 
-const chooseCity = safeRun(async index => {
-  const city = state.cityResults[index]
+const selectCityResult = safeRun(async index => {
+  const city = state.cityResults[Number(index)]
   if (!city) return
   state.selectedCity = city
-  const [country, weather] = await Promise.all([
-    fetchCountry(city.country_code),
-    fetchWeather(city)
-  ])
-  state.selectedCountry = country
-  state.selectedWeather = weather
+  state.selectedCountry = await fetchCountry(city.country_code)
+  state.selectedWeather = await fetchWeather(city)
   render()
 })
 
-const saveLog = safeRun(async event => {
+const saveBucketCity = safeRun(async event => {
   event.preventDefault()
-  const form = new FormData(event.currentTarget)
+  const formEl = event.currentTarget
+  if (!formEl) return
+  const form = new FormData(formEl)
+  const city = state.selectedCity || DEFAULT_CITY
+  const note = cleanBucketNotes(String(form.get('notes') || '').trim())
   const payload = {
+    city_name: city.city_name,
+    country_name: city.country_name,
+    latitude: city.latitude,
+    longitude: city.longitude,
+    notes: note
+  }
+  const { error } = await supabase.from(TABLES.bucketList).insert(payload)
+  if (error) throw error
+  formEl.reset()
+  await loadData()
+  state.nav = 'bucket'
+  toast('City saved to your bucket list.')
+  render()
+})
+
+const saveTravelLog = safeRun(async event => {
+  event.preventDefault()
+  const formEl = event.currentTarget
+  if (!formEl) return
+  const city = state.selectedCity || DEFAULT_CITY
+  const form = new FormData(formEl)
+  const payload = {
+    city_name: city.city_name,
+    country_name: city.country_name,
+    country_code: city.country_code,
     title: String(form.get('title') || '').trim(),
-    city_name: String(form.get('city_name') || '').trim(),
-    country_name: String(form.get('country_name') || '').trim(),
-    country_code: String(form.get('country_code') || '').trim().toUpperCase(),
     notes: String(form.get('notes') || '').trim(),
-    tags: TAGS.filter(tag => form.getAll('tags').includes(tag)),
     rating: Number(form.get('rating') || 0),
+    tags: [String(form.get('tag') || '').trim()].filter(Boolean),
     is_public: true
   }
-
-  const { error } = await supabase.from(TABLES.logs).insert(payload)
+  if (!payload.title || !payload.notes) {
+    toast('Please add both a title and notes for your travel log.')
+    return
+  }
+  const { data, error } = await supabase.from(TABLES.logs).insert(payload).select().single()
   if (error) throw error
-  event.currentTarget.reset()
+  formEl.reset()
   await loadData()
-  toast('Log saved.')
+  state.currentLogId = data?.id || null
   state.nav = 'home'
-  render()
-})
-
-const saveBucketItem = safeRun(async event => {
-  event.preventDefault()
-  const form = new FormData(event.currentTarget)
-  const payload = {
-    city_name: String(form.get('city_name') || '').trim(),
-    country_name: String(form.get('country_name') || '').trim(),
-    country_code: String(form.get('country_code') || '').trim().toUpperCase(),
-    notes: String(form.get('notes') || '').trim()
-  }
-
-  const finalPayload = {
-    ...payload,
-    notes: cleanBucketNotes(payload.notes) || defaultBucketNote(payload)
-  }
-
-  const { error } = await supabase.from(TABLES.bucketList).insert(finalPayload)
-  if (error) throw error
-  event.currentTarget.reset()
-  await loadData()
-  toast('Saved to your bucket list.')
-  state.nav = 'bucket'
+  toast('Travel log saved.')
   render()
 })
 
 const toggleUpvote = safeRun(async logId => {
-  if (!state.user) return
-  const existing = state.upvotes.find(item => item.log_id === logId && item.user_id === state.user.id)
+  const existing = state.upvotes.find(item => item.log_id === logId && item.user_id === state.user?.id)
   if (existing) {
     const { error } = await supabase.from(TABLES.upvotes).delete().eq('id', existing.id)
     if (error) throw error
@@ -1022,94 +798,77 @@ const toggleUpvote = safeRun(async logId => {
   render()
 })
 
-const saveComment = safeRun(async event => {
-  event.preventDefault()
-  const form = new FormData(event.currentTarget)
-  const payload = {
-    log_id: state.currentLogId,
-    comment_text: String(form.get('comment_text') || '').trim()
-  }
-  const { error } = await supabase.from(TABLES.comments).insert(payload)
+const deleteBucket = safeRun(async bucketId => {
+  const { error } = await supabase.from(TABLES.bucketList).delete().eq('id', bucketId)
   if (error) throw error
-  event.currentTarget.reset()
   await loadData()
-  toast('Comment posted.')
+  toast('Removed from bucket list.')
   render()
 })
 
 function bindEvents() {
-  document.getElementById('auth-form')?.addEventListener('submit', handleAuthSubmit)
-  document.getElementById('switch-auth')?.addEventListener('click', () => {
-    state.authMode = state.authMode === 'signup' ? 'signin' : 'signup'
-    state.authError = ''
-    render()
-  })
-  document.getElementById('sign-out')?.addEventListener('click', signOut)
-  document.getElementById('search-city-btn')?.addEventListener('click', searchCity)
-  document.getElementById('city-query')?.addEventListener('input', event => {
-    state.cityQuery = event.target.value
-  })
-  document.getElementById('log-form')?.addEventListener('submit', saveLog)
-  document.getElementById('bucket-form')?.addEventListener('submit', saveBucketItem)
-  document.getElementById('comment-form')?.addEventListener('submit', saveComment)
+  try {
+    document.getElementById('auth-form')?.addEventListener('submit', handleAuthSubmit)
+    document.getElementById('switch-auth')?.addEventListener('click', () => {
+      state.authMode = state.authMode === 'signup' ? 'signin' : 'signup'
+      state.authError = ''
+      render()
+    })
+    document.getElementById('sign-out')?.addEventListener('click', signOut)
+    document.getElementById('city-query')?.addEventListener('input', event => {
+      state.cityQuery = event.target.value
+    })
+    document.getElementById('city-search-btn')?.addEventListener('click', runCitySearch)
+    document.getElementById('bucket-form')?.addEventListener('submit', saveBucketCity)
+    document.getElementById('log-form')?.addEventListener('submit', saveTravelLog)
 
-  document.querySelectorAll('[data-nav]').forEach(button => button.addEventListener('click', () => {
-    state.nav = button.dataset.nav
-    render()
-  }))
-  document.querySelectorAll('[data-city-index]').forEach(button => button.addEventListener('click', () => chooseCity(Number(button.dataset.cityIndex))))
-  document.querySelectorAll('.open-log').forEach(button => button.addEventListener('click', () => {
-    state.currentLogId = button.dataset.logId
-    state.nav = 'log'
-    render()
-  }))
-  document.querySelectorAll('.toggle-upvote').forEach(button => button.addEventListener('click', () => toggleUpvote(button.dataset.logId)))
-  document.querySelectorAll('.open-profile').forEach(button => button.addEventListener('click', () => {
-    state.currentProfileUserId = button.dataset.userId
-    state.nav = 'profile'
-    render()
-  }))
-}
-
-async function enterApp(session) {
-  state.session = session || null
-  state.user = session?.user || null
-
-  if (!state.user) {
-    state.screen = 'auth'
-    render()
-    return
+    document.querySelectorAll('[data-nav]').forEach(btn => btn.addEventListener('click', () => {
+      state.nav = btn.dataset.nav
+      render()
+    }))
+    document.querySelectorAll('[data-city-index]').forEach(btn => btn.addEventListener('click', () => selectCityResult(btn.dataset.cityIndex)))
+    document.querySelectorAll('.open-log').forEach(btn => btn.addEventListener('click', () => {
+      state.currentLogId = btn.dataset.logId
+      state.nav = 'home'
+      render()
+    }))
+    document.querySelectorAll('.upvote-log').forEach(btn => btn.addEventListener('click', () => toggleUpvote(btn.dataset.logId)))
+    document.querySelectorAll('.delete-bucket').forEach(btn => btn.addEventListener('click', () => deleteBucket(btn.dataset.bucketId)))
+  } catch (error) {
+    console.error('Bind error:', error?.message, error?.stack)
   }
-
-  await ensureAppUser(state.user)
-  await loadData()
-  state.screen = 'app'
-  render()
 }
 
 function setupRealtime() {
   if (state.initializedRealtime) return
   state.initializedRealtime = true
-
-  supabase.channel('wandermap-live')
-    .on('postgres_changes', { event: '*', schema: 'public', table: TABLES.logs }, async () => { await loadData(); render() })
-    .on('postgres_changes', { event: '*', schema: 'public', table: TABLES.comments }, async () => { await loadData(); render() })
-    .on('postgres_changes', { event: '*', schema: 'public', table: TABLES.upvotes }, async () => { await loadData(); render() })
-    .on('postgres_changes', { event: '*', schema: 'public', table: TABLES.bucketList }, async () => { await loadData(); render() })
-    .subscribe()
+  try {
+    supabase.channel('wandermap-live')
+      .on('postgres_changes', { event: '*', schema: 'public', table: TABLES.logs }, async () => { await loadData(); render() })
+      .on('postgres_changes', { event: '*', schema: 'public', table: TABLES.comments }, async () => { await loadData(); render() })
+      .on('postgres_changes', { event: '*', schema: 'public', table: TABLES.upvotes }, async () => { await loadData(); render() })
+      .on('postgres_changes', { event: '*', schema: 'public', table: TABLES.bucketList }, async () => { await loadData(); render() })
+      .subscribe()
+  } catch (error) {
+    console.error('Realtime error:', error?.message)
+  }
 }
 
 async function init() {
   try {
-    state.loadingPhoto = await fetchApod()
+    state.screen = 'loading'
     render()
+    const apod = await fetchApod()
+    state.loadingPhoto = apod.image || ''
     const { data: { session } } = await supabase.auth.getSession()
-    await enterApp(session)
+    await enterAppWithSession(session)
+    if (state.user) {
+      state.selectedCity = DEFAULT_CITY
+      state.selectedCountry = await fetchCountry(DEFAULT_CITY.country_code)
+      state.selectedWeather = await fetchWeather(DEFAULT_CITY)
+    }
     setupRealtime()
-
-    supabase.auth.onAuthStateChange(async (_event, session) => {
-      await enterApp(session)
-    })
+    render()
   } catch (error) {
     console.error('Init error:', error?.message, error?.stack)
     state.screen = 'auth'
